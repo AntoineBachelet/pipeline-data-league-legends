@@ -1,0 +1,116 @@
+x-postgres-env: &postgres-env
+  DAGSTER_POSTGRES_USER: ${DAGSTER_POSTGRES_USER}
+  DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD}
+  DAGSTER_POSTGRES_DB: ${DAGSTER_POSTGRES_DB}
+
+x-common-env: &common-env
+  DAGSTER_POSTGRES_USER: ${DAGSTER_POSTGRES_USER}
+  DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD}
+  DAGSTER_POSTGRES_DB: ${DAGSTER_POSTGRES_DB}
+  LEAGUEPEDIA_USERNAME: ${LEAGUEPEDIA_USERNAME}
+  LEAGUEPEDIA_PASSWORD: ${LEAGUEPEDIA_PASSWORD}
+  S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  AWS_REGION: ${AWS_REGION}
+  SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+  SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+  SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+  SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+  SNOWFLAKE_SCHEMA_NAME: ${SNOWFLAKE_SCHEMA_NAME}
+  SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+
+
+services:
+
+  # ── Base de données des métadonnées Dagster ────────────────────────────────
+  postgresql:
+    image: postgres:15
+    container_name: lol_postgresql
+    environment:
+      POSTGRES_USER: ${DAGSTER_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${DAGSTER_POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - lol_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DAGSTER_POSTGRES_USER} -d ${DAGSTER_POSTGRES_DB}"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+
+  # ── User code (code location gRPC) ────────────────────────────────────────
+  user_code:
+    build:
+      context: .
+      dockerfile: Dockerfile_user_code
+    container_name: lol_user_code
+    image: lol_user_code_image
+    restart: always
+    environment:
+      <<: *common-env 
+      DAGSTER_CURRENT_IMAGE: "lol_user_code_image"
+    networks:
+      - lol_network
+
+  # ── Webserver (Dagit) ──────────────────────────────────────────────────────
+  dagster_webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile_dagster
+    container_name: lol_webserver
+    entrypoint:
+      - dagster-webserver
+      - -h
+      - "0.0.0.0"
+      - -p
+      - "3000"
+      - -w
+      - workspace.yaml
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *common-env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+    networks:
+      - lol_network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      user_code:
+        condition: service_started
+
+  # ── Daemon (schedules, sensors, run queue) ────────────────────────────────
+  dagster_daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile_dagster
+    container_name: lol_daemon
+    entrypoint:
+      - dagster-daemon
+      - run
+    restart: on-failure
+    environment:
+      <<: *common-env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+    networks:
+      - lol_network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      user_code:
+        condition: service_started
+
+networks:
+  lol_network:
+    driver: bridge
+    name: lol_network
+
+volumes:
+  postgres_data:

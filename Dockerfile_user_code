@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+
+RUN pip install \
+    dagster \
+    dagster-postgres \
+    dagster-docker
+
+WORKDIR /opt/dagster/app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY dagster_lol/ ./dagster_lol/
+COPY pyproject.toml .
+RUN pip install --no-cache-dir -e .
+
+EXPOSE 4000
+
+# Healthcheck requis pour que le webserver attende service_healthy
+HEALTHCHECK --timeout=1s --start-period=3s --interval=3s --retries=20 \
+    CMD ["dagster", "api", "grpc-health-check", "-p", "4000"]
+
+CMD ["dagster", "code-server", "start", "-h", "0.0.0.0", "-p", "4000", "-m", "dagster_lol"]
