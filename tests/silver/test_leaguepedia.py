@@ -133,10 +133,11 @@ class TestTournamentsSilver:
     def test_writes_to_correct_snowflake_table(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_tournament()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
 
         tournaments_silver(ctx, mock_s3, mock_snowflake)
 
-        table = mock_snowflake.truncate_and_insert.call_args[0][0]
+        table = mock_snowflake.merge.call_args[0][0]
         assert table == TOURNAMENTS_SNOWFLAKE_TABLE
 
     def test_deduplicates_on_overview_page(self, ctx, mock_s3, mock_snowflake):
@@ -146,10 +147,11 @@ class TestTournamentsSilver:
             _tournament(),  # duplicate overview_page
             _tournament(OverviewPage="LEC/2024 Season/Summer Season"),
         ]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         tournaments_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert len(rows) == 2
 
     def test_metadata_row_count(self, ctx, mock_s3, mock_snowflake):
@@ -158,6 +160,7 @@ class TestTournamentsSilver:
             _tournament(),
             _tournament(OverviewPage="LEC/2024 Season/Summer Season"),
         ]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         result = tournaments_silver(ctx, mock_s3, mock_snowflake)
 
@@ -166,10 +169,11 @@ class TestTournamentsSilver:
     def test_columns_are_renamed(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_tournament()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
 
         tournaments_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert "overview_page" in rows[0]
         assert "OverviewPage" not in rows[0]
 
@@ -182,10 +186,11 @@ class TestPlayersSilver:
     def test_writes_to_correct_snowflake_table(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_player()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
 
         players_silver(ctx, mock_s3, mock_snowflake)
 
-        table = mock_snowflake.truncate_and_insert.call_args[0][0]
+        table = mock_snowflake.merge.call_args[0][0]
         assert table == PLAYERS_SNOWFLAKE_TABLE
 
     def test_deduplicates_on_overview_page(self, ctx, mock_s3, mock_snowflake):
@@ -195,19 +200,50 @@ class TestPlayersSilver:
             _player(),  # duplicate
             _player(OverviewPage="Caps", Player="Caps"),
         ]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         players_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert len(rows) == 2
 
     def test_metadata_row_count(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_player()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
 
         result = players_silver(ctx, mock_s3, mock_snowflake)
 
         assert result.metadata["row_count"] == 1
+
+    def test_metadata_new_count(self, ctx, mock_s3, mock_snowflake):
+        mock_s3.get_latest_key.return_value = "bronze/key"
+        mock_s3.download_json.return_value = [_player()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
+
+        result = players_silver(ctx, mock_s3, mock_snowflake)
+
+        assert result.metadata["new_count"] == 1
+        assert result.metadata["updated_count"] == 0
+
+    def test_metadata_updated_count(self, ctx, mock_s3, mock_snowflake):
+        mock_s3.get_latest_key.return_value = "bronze/key"
+        mock_s3.download_json.return_value = [_player()]
+        mock_snowflake.merge.return_value = {"new_count": 0, "updated_count": 1}
+
+        result = players_silver(ctx, mock_s3, mock_snowflake)
+
+        assert result.metadata["new_count"] == 0
+        assert result.metadata["updated_count"] == 1
+
+    def test_uses_overview_page_as_merge_key(self, ctx, mock_s3, mock_snowflake):
+        mock_s3.get_latest_key.return_value = "bronze/key"
+        mock_s3.download_json.return_value = [_player()]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
+
+        players_silver(ctx, mock_s3, mock_snowflake)
+
+        assert mock_snowflake.merge.call_args[1]["key_columns"] == ["overview_page"]
 
 
 # ---------------------------------------------------------------------------
@@ -218,20 +254,22 @@ class TestTournamentRostersSilver:
     def test_writes_to_correct_snowflake_table(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_roster()]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
-        table = mock_snowflake.truncate_and_insert.call_args[0][0]
+        table = mock_snowflake.merge.call_args[0][0]
         assert table == TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE
 
     def test_explodes_player_links(self, ctx, mock_s3, mock_snowflake):
         """Un roster avec 2 joueurs doit produire 2 lignes après explode."""
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_roster()]  # Caps;;Rekkles → 2 joueurs
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert len(rows) == 2
 
     def test_drops_empty_roster_rows(self, ctx, mock_s3, mock_snowflake):
@@ -240,10 +278,11 @@ class TestTournamentRostersSilver:
             _roster(),                       # 2 joueurs → 2 lignes
             _roster(RosterLinks=""),         # vide → doit être ignoré
         ]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert len(rows) == 2
 
     def test_deduplicates_on_composite_key(self, ctx, mock_s3, mock_snowflake):
@@ -252,10 +291,11 @@ class TestTournamentRostersSilver:
             _roster(RosterLinks="Caps", Roles="Mid"),
             _roster(RosterLinks="Caps", Roles="Mid"),  # même (team, overview_page, player_link)
         ]
+        mock_snowflake.merge.return_value = {"new_count": 1, "updated_count": 0}
 
         tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         assert len(rows) == 1
 
     def test_role_aligned_with_player(self, ctx, mock_s3, mock_snowflake):
@@ -264,10 +304,11 @@ class TestTournamentRostersSilver:
         mock_s3.download_json.return_value = [
             _roster(RosterLinks="Caps;;Rekkles", Roles="Mid;;Bot"),
         ]
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
-        rows = mock_snowflake.truncate_and_insert.call_args[0][1]
+        rows = mock_snowflake.merge.call_args[0][1]
         roles = {r["player_link"]: r["role"] for r in rows}
         assert roles["Caps"] == "Mid"
         assert roles["Rekkles"] == "Bot"
@@ -275,6 +316,7 @@ class TestTournamentRostersSilver:
     def test_metadata_row_count(self, ctx, mock_s3, mock_snowflake):
         mock_s3.get_latest_key.return_value = "bronze/key"
         mock_s3.download_json.return_value = [_roster()]  # 2 joueurs
+        mock_snowflake.merge.return_value = {"new_count": 2, "updated_count": 0}
 
         result = tournament_rosters_silver(ctx, mock_s3, mock_snowflake)
 
