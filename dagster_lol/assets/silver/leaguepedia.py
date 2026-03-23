@@ -137,14 +137,25 @@ def tournaments_silver(
         for row in df.to_dict("records")
     ]
 
-    snowflake.truncate_and_insert(TOURNAMENTS_SNOWFLAKE_TABLE, silver_rows, list(TOURNAMENTS_COLUMN_MAPPING.values()))
-    context.log.info(f"✅ {len(silver_rows)} rows written to Snowflake → {TOURNAMENTS_SNOWFLAKE_TABLE}")
+    merge_result = snowflake.merge(
+        TOURNAMENTS_SNOWFLAKE_TABLE,
+        silver_rows,
+        list(TOURNAMENTS_COLUMN_MAPPING.values()),
+        key_columns=["overview_page"],
+    )
+    context.log.info(
+        f"✅ {len(silver_rows)} rows processed → "
+        f"{merge_result['new_count']} new, {merge_result['updated_count']} updated "
+        f"→ {TOURNAMENTS_SNOWFLAKE_TABLE}"
+    )
 
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
             "snowflake_table": TOURNAMENTS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
+            "new_count": merge_result["new_count"],
+            "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
             "ingestion_date": today,
         }
@@ -177,14 +188,25 @@ def players_silver(
         for row in df.to_dict("records")
     ]
 
-    snowflake.truncate_and_insert(PLAYERS_SNOWFLAKE_TABLE, silver_rows, list(PLAYERS_COLUMN_MAPPING.values()))
-    context.log.info(f"✅ {len(silver_rows)} rows written to Snowflake → {PLAYERS_SNOWFLAKE_TABLE}")
+    merge_result = snowflake.merge(
+        PLAYERS_SNOWFLAKE_TABLE,
+        silver_rows,
+        list(PLAYERS_COLUMN_MAPPING.values()),
+        key_columns=["overview_page"],
+    )
+    context.log.info(
+        f"✅ {len(silver_rows)} rows processed → "
+        f"{merge_result['new_count']} new, {merge_result['updated_count']} updated "
+        f"→ {PLAYERS_SNOWFLAKE_TABLE}"
+    )
 
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
             "snowflake_table": PLAYERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
+            "new_count": merge_result["new_count"],
+            "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
             "ingestion_date": today,
         }
@@ -244,18 +266,25 @@ def tournament_rosters_silver(
         for row in df.to_dict("records")
     ]
 
-    snowflake.truncate_and_insert(
+    merge_result = snowflake.merge(
         TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE,
         silver_rows,
         list(TOURNAMENT_ROSTERS_COLUMN_MAPPING.values()),
+        key_columns=["team", "overview_page", "player_link"],
     )
-    context.log.info(f"✅ {len(silver_rows)} rows written to Snowflake → {TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE}")
+    context.log.info(
+        f"✅ {len(silver_rows)} rows processed → "
+        f"{merge_result['new_count']} new, {merge_result['updated_count']} updated "
+        f"→ {TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE}"
+    )
 
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
             "snowflake_table": TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
+            "new_count": merge_result["new_count"],
+            "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
             "ingestion_date": today,
         }
