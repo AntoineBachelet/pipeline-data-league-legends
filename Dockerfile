@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir -e .
 COPY dbt_gold_layer/ ./dbt_gold_layer/
 RUN cd dbt_gold_layer && \
     SNOWFLAKE_ACCOUNT=dummy \
-    SNOWFLAKE_USER=dummy \
-    SNOWFLAKE_PASSWORD=dummy \
+    SNOWFLAKE_DBT_USER=dummy \
+    SNOWFLAKE_DBT_PASSWORD=dummy \
     SNOWFLAKE_DATABASE=dummy \
     SNOWFLAKE_WAREHOUSE=dummy \
-    SNOWFLAKE_ROLE=dummy \
+    SNOWFLAKE_DBT_ROLE=dummy \
     dbt parse --profiles-dir .
 
 EXPOSE 4000

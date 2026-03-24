@@ -36,3 +36,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# dbt
+dbt_gold_layer/.user.yml
+dbt_gold_layer/target/
+dbt_gold_layer/dbt_packages/
+logs/
