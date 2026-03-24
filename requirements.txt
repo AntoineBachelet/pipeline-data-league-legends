@@ -6,3 +6,6 @@ mwrogue
 pandas
 boto3
 snowflake-connector-python
+dbt-core 
+dbt-snowflake 
+dagster-dbt
