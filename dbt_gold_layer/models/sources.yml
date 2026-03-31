@@ -6,3 +6,5 @@ sources:
     schema: SILVER
     tables:
       - name: LEAGUEPEDIA_TOURNAMENTS
+      - name: LEAGUEPEDIA_PLAYERS
+      - name: LEAGUEPEDIA_TOURNAMENT_ROSTERS
