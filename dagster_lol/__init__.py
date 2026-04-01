@@ -1,14 +1,16 @@
 from dagster import Definitions
 from dagster import EnvVar
+from dagster_dbt import DbtCliResource
 from .ressources import S3Resource, LeaguepediaResource, SnowflakeResource
-from .assets import bronze_assets, silver_assets, silver_checks
+from .assets import bronze_assets, silver_assets, silver_checks, lol_dbt_assets, DBT_PROJECT_DIR
 from .jobs import leaguepedia_job, bronze_job
 
 defs = Definitions(
-    assets=[*bronze_assets, *silver_assets],
+    assets=[*bronze_assets, *silver_assets, lol_dbt_assets],
     asset_checks=silver_checks,
     jobs=[leaguepedia_job, bronze_job],
     resources={
+        "dbt": DbtCliResource(project_dir=str(DBT_PROJECT_DIR)),
         "leaguepedia": LeaguepediaResource(
             username=EnvVar("LEAGUEPEDIA_USERNAME"),
             password=EnvVar("LEAGUEPEDIA_PASSWORD"),
