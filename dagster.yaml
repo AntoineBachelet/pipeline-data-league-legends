@@ -32,6 +32,10 @@ run_launcher:
       - SNOWFLAKE_DATABASE
       - SNOWFLAKE_SCHEMA_NAME
       - SNOWFLAKE_WAREHOUSE
+      - SNOWFLAKE_DBT_USER
+      - SNOWFLAKE_DBT_PASSWORD
+      - SNOWFLAKE_DBT_ROLE
+      - DBT_PROFILES_DIR
 
 telemetry:
   enabled: false
