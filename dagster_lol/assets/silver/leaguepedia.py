@@ -3,8 +3,8 @@ import pandas as pd
 from dagster import asset, AssetExecutionContext, MaterializeResult, AssetDep
 from ...ressources.s3 import S3Resource
 from ...ressources.snowflake import SnowflakeResource
-from .transform import standardize_types, complete_missing_values, deduplicate
-from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema
+from .transform import standardize_types, complete_missing_values, deduplicate, parse_soloqueue_ids
+from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema, PlayerSoloqueueAccountsSchema
 
 TOURNAMENTS_BRONZE_PREFIX = "bronze/leaguepedia/tournaments/"
 PLAYERS_BRONZE_PREFIX = "bronze/leaguepedia/players/"
@@ -13,6 +13,7 @@ TOURNAMENT_ROSTERS_BRONZE_PREFIX = "bronze/leaguepedia/tournamentrosters/"
 TOURNAMENTS_SNOWFLAKE_TABLE = "silver.leaguepedia_tournaments"
 PLAYERS_SNOWFLAKE_TABLE = "silver.leaguepedia_players"
 TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE = "silver.leaguepedia_tournament_rosters"
+PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE = "silver.leaguepedia_player_soloqueue_accounts"
 
 PLAYERS_COLUMN_MAPPING = {
     "ID": "id",
@@ -287,5 +288,80 @@ def tournament_rosters_silver(
             "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
             "ingestion_date": today,
+        }
+    )
+
+
+SOLOQUEUE_ACCOUNTS_COLUMNS = list(
+    PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA.keys()
+)
+
+
+@asset(
+    description="Comptes soloqueue normalisés (1 ligne/compte) depuis players_silver vers Snowflake",
+    deps=[AssetDep("players_silver")],
+)
+def player_soloqueue_accounts_silver(
+    context: AssetExecutionContext,
+    s3: S3Resource,
+    snowflake: SnowflakeResource,
+) -> MaterializeResult:
+    latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX)
+    context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
+
+    raw_data = s3.download_json(latest_key)
+    context.log.info(f"  → {len(raw_data)} total players loaded from bronze")
+
+    records = []
+    for player in raw_data:
+        overview_page = player.get("OverviewPage")
+        raw_ids = player.get("SoloqueueIds") or ""
+        accounts = parse_soloqueue_ids(raw_ids)
+        for account in accounts:
+            records.append({"player_overview_page": overview_page, **account})
+
+    if not records:
+        context.log.warning("No soloqueue accounts parsed — table will be empty")
+        return MaterializeResult(
+            metadata={
+                "snowflake_table": PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
+                "row_count": 0,
+                "new_count": 0,
+                "updated_count": 0,
+                "source_key": latest_key,
+                "ingestion_date": date.today().isoformat(),
+            }
+        )
+
+    df = pd.DataFrame(records, columns=SOLOQUEUE_ACCOUNTS_COLUMNS)
+    df = deduplicate(context, df, ["player_overview_page", "region", "game_name"])
+    df = standardize_types(context, df, PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA)
+    df = complete_missing_values(context, df, PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA)
+
+    silver_rows = [
+        {k: (None if pd.isna(v) else v) for k, v in row.items()}
+        for row in df.to_dict("records")
+    ]
+
+    merge_result = snowflake.merge(
+        PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
+        silver_rows,
+        SOLOQUEUE_ACCOUNTS_COLUMNS,
+        key_columns=["player_overview_page", "region", "game_name"],
+    )
+    context.log.info(
+        f"✅ {len(silver_rows)} rows processed → "
+        f"{merge_result['new_count']} new, {merge_result['updated_count']} updated "
+        f"→ {PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE}"
+    )
+
+    return MaterializeResult(
+        metadata={
+            "snowflake_table": PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
+            "row_count": len(silver_rows),
+            "new_count": merge_result["new_count"],
+            "updated_count": merge_result["updated_count"],
+            "source_key": latest_key,
+            "ingestion_date": date.today().isoformat(),
         }
     )
