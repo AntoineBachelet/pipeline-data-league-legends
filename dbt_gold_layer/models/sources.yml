@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: silver
+    database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+    schema: SILVER
+    tables:
+      - name: LEAGUEPEDIA_TOURNAMENTS
+      - name: LEAGUEPEDIA_PLAYERS
+      - name: LEAGUEPEDIA_TOURNAMENT_ROSTERS

@@ -16,6 +16,16 @@ COPY dagster_lol/ ./dagster_lol/
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
 
+COPY dbt_gold_layer/ ./dbt_gold_layer/
+RUN cd dbt_gold_layer && \
+    SNOWFLAKE_ACCOUNT=dummy \
+    SNOWFLAKE_DBT_USER=dummy \
+    SNOWFLAKE_DBT_PASSWORD=dummy \
+    SNOWFLAKE_DATABASE=dummy \
+    SNOWFLAKE_WAREHOUSE=dummy \
+    SNOWFLAKE_DBT_ROLE=dummy \
+    dbt parse --profiles-dir .
+
 EXPOSE 4000
 
 # Healthcheck requis pour que le webserver attende service_healthy
