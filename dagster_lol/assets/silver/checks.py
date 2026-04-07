@@ -5,8 +5,9 @@ from .leaguepedia import (
     TOURNAMENTS_SNOWFLAKE_TABLE,
     PLAYERS_SNOWFLAKE_TABLE,
     TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE,
+    PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
 )
-from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema
+from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema, PlayerSoloqueueAccountsSchema
 
 
 def _count_duplicates(snowflake: SnowflakeResource, table: str, keys: list[str]) -> int:
@@ -121,6 +122,42 @@ def tournament_rosters_no_nulls(snowflake: SnowflakeResource) -> AssetCheckResul
     )
 
 
+# --- Player Soloqueue Accounts ---
+
+@asset_check(
+    asset="player_soloqueue_accounts_silver",
+    description="No duplicate (player_overview_page, region, game_name) in player_soloqueue_accounts_silver",
+)
+def player_soloqueue_accounts_no_duplicates(snowflake: SnowflakeResource) -> AssetCheckResult:
+    count = _count_duplicates(
+        snowflake,
+        PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
+        ["player_overview_page", "region", "game_name"],
+    )
+    return AssetCheckResult(
+        passed=count == 0,
+        severity=AssetCheckSeverity.ERROR,
+        metadata={"duplicate_groups": count},
+    )
+
+
+@asset_check(
+    asset="player_soloqueue_accounts_silver",
+    description="Non-nullable columns have no NULLs in player_soloqueue_accounts_silver",
+)
+def player_soloqueue_accounts_no_nulls(snowflake: SnowflakeResource) -> AssetCheckResult:
+    count, cols = _count_unexpected_nulls(
+        snowflake,
+        PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
+        PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA,
+    )
+    return AssetCheckResult(
+        passed=count == 0,
+        severity=AssetCheckSeverity.ERROR,
+        metadata={"null_rows": count, "checked_columns": str(cols)},
+    )
+
+
 silver_checks = [
     tournaments_no_duplicates,
     tournaments_no_nulls,
@@ -128,4 +165,6 @@ silver_checks = [
     players_no_nulls,
     tournament_rosters_no_duplicates,
     tournament_rosters_no_nulls,
+    player_soloqueue_accounts_no_duplicates,
+    player_soloqueue_accounts_no_nulls,
 ]
