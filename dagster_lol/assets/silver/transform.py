@@ -1,5 +1,6 @@
 """Module de nettoyage et transformation de données pour les DataFrames."""
 
+import re
 from datetime import datetime
 from typing import Optional, Union
 from dagster import AssetExecutionContext
@@ -129,6 +130,97 @@ def deduplicate(context, df, columns):
         )
 
     return df
+
+
+_REGION_MARKER = re.compile(r"'''([A-Z0-9]+)(?::'''|''':)", re.IGNORECASE)
+_PER_ACCOUNT_REGION = re.compile(r"^(.+?)\s*\(([A-Z0-9]+)\)\s*$", re.IGNORECASE)
+
+
+def _parse_account_token(token: str, region: str) -> Optional[dict]:
+    """Parse a single account token into a structured dict.
+
+    Handles:
+    - Per-account region suffix: "Alderiate (EUW)"
+    - Riot tagline: "KC Caliste#0001"
+    - Plain name: "KuroiHoshi"
+    """
+    token = token.strip()
+    if not token:
+        return None
+
+    per_account_match = _PER_ACCOUNT_REGION.match(token)
+    if per_account_match:
+        name_part = per_account_match.group(1).strip()
+        region = per_account_match.group(2).upper()
+    else:
+        name_part = token
+
+    if "#" in name_part:
+        game_name, tag_line = name_part.split("#", 1)
+        game_name = game_name.strip()
+        tag_line = tag_line.strip() or None
+    else:
+        game_name = name_part.strip()
+        tag_line = None
+
+    if not game_name:
+        return None
+
+    return {
+        "region": region,
+        "game_name": game_name,
+        "tag_line": tag_line,
+        "full_id": f"{game_name}#{tag_line}" if tag_line else game_name,
+    }
+
+
+def parse_soloqueue_ids(raw: str, default_region: str = "EUW") -> list[dict]:
+    """Parse a raw soloqueue_ids string into a list of structured account dicts.
+
+    Handles the following input formats from Leaguepedia:
+    - Region headers:  '''EUW:''' KC NEXT ADKING#EUW <br> '''KR:''' KC Caliste#0001
+    - Region in parens: Alderiate (EUW), Adreitael (EUW)
+    - Mixed comma/br:  '''EUW:''' Supmass 113, lpl aggression7
+    - No region:       KuroiHoshi, XIII Ghost  (defaults to EUW)
+
+    Returns a list of dicts with keys: region, game_name, tag_line, full_id.
+    """
+    if not raw or not raw.strip():
+        return []
+
+    text = re.sub(r"\s*<br\s*/?>\s*", ",", raw, flags=re.IGNORECASE)
+
+    parts = _REGION_MARKER.split(text)
+    # parts[0]           = text before first region marker (may be empty)
+    # parts[1], parts[2] = region, accounts chunk
+    # parts[3], parts[4] = next region, accounts chunk, …
+
+    accounts = []
+
+    if len(parts) == 1:
+        # No region markers — parse whole string with default region
+        for token in parts[0].split(","):
+            account = _parse_account_token(token, default_region)
+            if account:
+                accounts.append(account)
+        return accounts
+
+    # Text before first marker (rare but possible)
+    if parts[0].strip().strip(","):
+        for token in parts[0].split(","):
+            account = _parse_account_token(token, default_region)
+            if account:
+                accounts.append(account)
+
+    for i in range(1, len(parts), 2):
+        region = parts[i].upper()
+        chunk = parts[i + 1] if i + 1 < len(parts) else ""
+        for token in chunk.split(","):
+            account = _parse_account_token(token, region)
+            if account:
+                accounts.append(account)
+
+    return accounts
 
 
 def complete_missing_values(context, df, columns):
