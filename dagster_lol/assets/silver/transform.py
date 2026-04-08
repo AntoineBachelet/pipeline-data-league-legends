@@ -174,7 +174,7 @@ def _parse_account_token(token: str, region: str) -> Optional[dict]:
     }
 
 
-def parse_soloqueue_ids(raw: str, default_region: str = "EUW") -> list[dict]:
+def parse_soloqueue_ids(raw: str, default_region: str = "EUW", lolpros_account: Optional[dict] = None) -> list[dict]:
     """Parse a raw soloqueue_ids string into a list of structured account dicts.
 
     Handles the following input formats from Leaguepedia:
@@ -185,10 +185,9 @@ def parse_soloqueue_ids(raw: str, default_region: str = "EUW") -> list[dict]:
 
     Returns a list of dicts with keys: region, game_name, tag_line, full_id.
     """
-    if not raw or not raw.strip():
+    if (not raw or not raw.strip()) and not lolpros_account:
         return []
-
-    text = re.sub(r"\s*<br\s*/?>\s*", ",", raw, flags=re.IGNORECASE)
+    text = re.sub(r"\s*<br\s*/?>\s*", ",", raw or "", flags=re.IGNORECASE)
 
     parts = _REGION_MARKER.split(text)
     # parts[0]           = text before first region marker (may be empty)
@@ -203,22 +202,40 @@ def parse_soloqueue_ids(raw: str, default_region: str = "EUW") -> list[dict]:
             account = _parse_account_token(token, default_region)
             if account:
                 accounts.append(account)
-        return accounts
+    else:
+        # Text before first marker (rare but possible)
+        if parts[0].strip().strip(","):
+            for token in parts[0].split(","):
+                account = _parse_account_token(token, default_region)
+                if account:
+                    accounts.append(account)
 
-    # Text before first marker (rare but possible)
-    if parts[0].strip().strip(","):
-        for token in parts[0].split(","):
-            account = _parse_account_token(token, default_region)
-            if account:
-                accounts.append(account)
+        for i in range(1, len(parts), 2):
+            region = parts[i].upper()
+            chunk = parts[i + 1] if i + 1 < len(parts) else ""
+            for token in chunk.split(","):
+                account = _parse_account_token(token, region)
+                if account:
+                    accounts.append(account)
 
-    for i in range(1, len(parts), 2):
-        region = parts[i].upper()
-        chunk = parts[i + 1] if i + 1 < len(parts) else ""
-        for token in chunk.split(","):
-            account = _parse_account_token(token, region)
-            if account:
-                accounts.append(account)
+    if lolpros_account:
+        summoner_name = lolpros_account.get("summoner_name", "")
+        if "#" in summoner_name:
+            game_name, tag_line = summoner_name.split("#", 1)
+        else:
+            game_name, tag_line = summoner_name, None
+
+        already_present = any(
+            a["game_name"] == game_name and a["tag_line"] == tag_line
+            for a in accounts
+        )
+        if not already_present:
+            accounts.append({
+                "region": lolpros_account.get("server", default_region).upper(),
+                "game_name": game_name,
+                "tag_line": tag_line,
+                "full_id": f"{game_name}#{tag_line}" if tag_line else game_name,
+            })
 
     return accounts
 

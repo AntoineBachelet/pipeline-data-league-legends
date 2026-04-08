@@ -9,6 +9,7 @@ from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema, 
 TOURNAMENTS_BRONZE_PREFIX = "bronze/leaguepedia/tournaments/"
 PLAYERS_BRONZE_PREFIX = "bronze/leaguepedia/players/"
 TOURNAMENT_ROSTERS_BRONZE_PREFIX = "bronze/leaguepedia/tournamentrosters/"
+LOLPROS_LADDER_BRONZE_PREFIX = "bronze/lolpros/ladder/"
 
 TOURNAMENTS_SNOWFLAKE_TABLE = "silver.leaguepedia_tournaments"
 PLAYERS_SNOWFLAKE_TABLE = "silver.leaguepedia_players"
@@ -314,16 +315,36 @@ def player_soloqueue_accounts_silver(
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
     latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX, extension=".parquet")
-    context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
+    context.log.info(f"Reading latest players bronze file: s3://{s3.bucket_name}/{latest_key}")
 
     df_bronze = s3.download_parquet(latest_key)
     context.log.info(f"  → {len(df_bronze)} total players loaded from bronze")
 
+    latest_key_ladder = s3.get_latest_key(LOLPROS_LADDER_BRONZE_PREFIX, extension=".parquet")
+    context.log.info(f"Reading latest ladder bronze file: s3://{s3.bucket_name}/{latest_key}")
+
+    df_bronze_ladder = s3.download_parquet(latest_key_ladder)
+    context.log.info(f"  → {len(df_bronze_ladder)} total ladder entries loaded from bronze")
+
     records = []
-    for _, player in df_bronze[["OverviewPage", "SoloqueueIds"]].iterrows():
+    for _, player in df_bronze[["OverviewPage", "SoloqueueIds", "Lolpros", "ID"]].iterrows():
         overview_page = player["OverviewPage"]
         raw_ids = player["SoloqueueIds"] or ""
-        accounts = parse_soloqueue_ids(raw_ids)
+        lolpros_link = player["Lolpros"] or ""
+        player_id = player["ID"] or ""
+        lolpros_slug = ""
+        if lolpros_link != "":
+            lolpros_slug = lolpros_link.replace("https://lolpros.gg/player/", "")
+            lolpros_slug = lolpros_slug.replace("/", "")
+        df_filtered = df_bronze_ladder[df_bronze_ladder["slug"] == lolpros_slug]
+        if len(df_filtered)==0:
+            # On teste avec l'id du joueur au cas ou si le lolpro n'est pas ou mal renseigné
+            lolpros_slug = player_id.lower()
+            df_filtered = df_bronze_ladder[df_bronze_ladder["slug"] == lolpros_slug]
+        if len(df_filtered)>0:
+            accounts = parse_soloqueue_ids(raw_ids, lolpros_account=df_filtered["account"].iloc[0])
+        else:
+            accounts = parse_soloqueue_ids(raw_ids)
         for account in accounts:
             records.append({"player_overview_page": overview_page, **account})
 
@@ -371,6 +392,6 @@ def player_soloqueue_accounts_silver(
             "new_count": merge_result["new_count"],
             "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
-            "ingestion_date": today,
+            "ingestion_date": date.today().isoformat(),
         }
     )
