@@ -14,6 +14,8 @@ run_launcher:
   module: dagster_docker
   class: DockerRunLauncher
   config:
+    container_kwargs:
+      auto_remove: true
     networks:
       - lol_network
     env_vars:
