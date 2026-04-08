@@ -82,9 +82,10 @@ def tournaments_bronze(
         time.sleep(RATE_LIMIT_DELAY)
 
     today = date.today().isoformat()
-    s3_key = f"bronze/leaguepedia/tournaments/{today}/tournaments.json"
-
-    s3_path = s3.upload_json(all_results, s3_key)
+    # s3_key = f"bronze/leaguepedia/tournaments/{today}/tournaments.json"
+    s3_key = f"bronze/leaguepedia/tournaments/{today}/tournaments.parquet"
+    # s3_path = s3.upload_json(all_results, s3_key)
+    s3_path = s3.upload_parquet(all_results, s3_key)
     context.log.info(f"✅ {len(all_results)} tournois sauvegardés → {s3_path}")
     # if result:
     #     tournaments.append(result[0])
@@ -146,9 +147,11 @@ def tournament_rosters_bronze(
         time.sleep(RATE_LIMIT_DELAY)
 
     today = date.today().isoformat()
-    s3_key = f"bronze/leaguepedia/tournamentrosters/{today}/tournamentrosters.json"
+    #s3_key = f"bronze/leaguepedia/tournamentrosters/{today}/tournamentrosters.json"
+    s3_key = f"bronze/leaguepedia/tournamentrosters/{today}/tournamentrosters.parquet"
+    #s3_path = s3.upload_json(all_results, s3_key)
+    s3_path = s3.upload_parquet(all_results, s3_key)
 
-    s3_path = s3.upload_json(all_results, s3_key)
     context.log.info(f"✅ {len(all_results)} tournament rosters sauvegardés → {s3_path}")
     # if result:
     #     tournaments.append(result[0])
@@ -256,9 +259,10 @@ def players_bronze(
         time.sleep(RATE_LIMIT_DELAY)
 
     today = date.today().isoformat()
-    s3_key = f"bronze/leaguepedia/players/{today}/players.json"
-
-    s3_path = s3.upload_json(all_results, s3_key)
+    # s3_key = f"bronze/leaguepedia/players/{today}/players.json"
+    s3_key = f"bronze/leaguepedia/players/{today}/players.parquet"
+    # s3_path = s3.upload_json(all_results, s3_key)
+    s3_path = s3.upload_parquet(all_results, s3_key)
     context.log.info(f"✅ {len(all_results)} joueurs sauvegardés → {s3_path}")
 
     return MaterializeResult(

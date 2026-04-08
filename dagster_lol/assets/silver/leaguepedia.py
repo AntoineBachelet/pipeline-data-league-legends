@@ -120,13 +120,16 @@ def tournaments_silver(
     s3: S3Resource,
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
-    latest_key = s3.get_latest_key(TOURNAMENTS_BRONZE_PREFIX)
+    latest_key = s3.get_latest_key(TOURNAMENTS_BRONZE_PREFIX, extension=".parquet")
     context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
 
-    raw_data = s3.download_json(latest_key)
-    context.log.info(f"  → {len(raw_data)} total tournaments loaded from bronze")
+    # raw_data = s3.download_json(latest_key)
+    # df = pd.DataFrame(raw_data)
+    # context.log.info(f"  → {len(raw_data)} total tournaments loaded from bronze")
 
-    df = pd.DataFrame(raw_data)
+    df = s3.download_parquet(latest_key)  # retourne directement un DataFrame
+    context.log.info(f"  → {len(df)} total tournaments loaded from bronze")
+
     df = df[list(TOURNAMENTS_COLUMN_MAPPING.keys())].rename(columns=TOURNAMENTS_COLUMN_MAPPING)
 
     df = deduplicate(context, df, ["overview_page"])
@@ -171,13 +174,16 @@ def players_silver(
     s3: S3Resource,
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
-    latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX)
+    latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX, extension=".parquet")
     context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
 
-    raw_data = s3.download_json(latest_key)
-    context.log.info(f"  → {len(raw_data)} total players loaded from bronze")
+    # raw_data = s3.download_json(latest_key)
+    # context.log.info(f"  → {len(raw_data)} total players loaded from bronze")
 
-    df = pd.DataFrame(raw_data)
+    # df = pd.DataFrame(raw_data)
+
+    df = s3.download_parquet(latest_key)  # retourne directement un DataFrame
+    context.log.info(f"  → {len(df)} total players loaded from bronze")
     df = df[list(PLAYERS_COLUMN_MAPPING.keys())].rename(columns=PLAYERS_COLUMN_MAPPING)
 
     df = deduplicate(context, df, ["overview_page"])
@@ -233,13 +239,14 @@ def tournament_rosters_silver(
     s3: S3Resource,
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
-    latest_key = s3.get_latest_key(TOURNAMENT_ROSTERS_BRONZE_PREFIX)
+    latest_key = s3.get_latest_key(TOURNAMENT_ROSTERS_BRONZE_PREFIX, extension=".parquet")
     context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
 
-    raw_data = s3.download_json(latest_key)
-    context.log.info(f"  → {len(raw_data)} total roster entries loaded from bronze")
+    # raw_data = s3.download_json(latest_key)
+    # context.log.info(f"  → {len(raw_data)} total roster entries loaded from bronze")
 
-    df = pd.DataFrame(raw_data)
+    # df = pd.DataFrame(raw_data)
+    df = s3.download_parquet(latest_key)
     df = df[list(TOURNAMENT_ROSTERS_COLUMN_MAPPING.keys())].rename(columns=TOURNAMENT_ROSTERS_COLUMN_MAPPING)
 
     df["player_link"] = df["player_link"].str.split(";;")
@@ -306,19 +313,21 @@ def player_soloqueue_accounts_silver(
     s3: S3Resource,
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
-    latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX)
+    latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX, extension=".parquet")
     context.log.info(f"Reading latest bronze file: s3://{s3.bucket_name}/{latest_key}")
 
-    raw_data = s3.download_json(latest_key)
-    context.log.info(f"  → {len(raw_data)} total players loaded from bronze")
+    df_bronze = s3.download_parquet(latest_key)
+    context.log.info(f"  → {len(df_bronze)} total players loaded from bronze")
 
     records = []
-    for player in raw_data:
-        overview_page = player.get("OverviewPage")
-        raw_ids = player.get("SoloqueueIds") or ""
+    for _, player in df_bronze[["OverviewPage", "SoloqueueIds"]].iterrows():
+        overview_page = player["OverviewPage"]
+        raw_ids = player["SoloqueueIds"] or ""
         accounts = parse_soloqueue_ids(raw_ids)
         for account in accounts:
             records.append({"player_overview_page": overview_page, **account})
+
+    today = date.today().isoformat()
 
     if not records:
         context.log.warning("No soloqueue accounts parsed — table will be empty")
@@ -329,7 +338,7 @@ def player_soloqueue_accounts_silver(
                 "new_count": 0,
                 "updated_count": 0,
                 "source_key": latest_key,
-                "ingestion_date": date.today().isoformat(),
+                "ingestion_date": today,
             }
         )
 
@@ -362,6 +371,6 @@ def player_soloqueue_accounts_silver(
             "new_count": merge_result["new_count"],
             "updated_count": merge_result["updated_count"],
             "source_key": latest_key,
-            "ingestion_date": date.today().isoformat(),
+            "ingestion_date": today,
         }
     )

@@ -32,5 +32,5 @@ tournament_rosters_last_regular_split AS (
 SELECT trlrs.NAME, trlrs.OVERVIEW_PAGE, trlrs.LEAGUE, trlrs.DATE_START, trlrs.IS_PLAYOFFS, trlrs.SPLIT, trlrs.YEAR, trlrs.PLAYER_LINK, trlrs.ROLE, trlrs.TEAM,
     p.NAME AS PLAYER_NAME, p.NATIVE_NAME, p.NAME_ALPHABET, p.NAME_FULL, p.IMAGE, p.COUNTRY, p.BIRTHDATE, p.CONTRACT, p.SOLOQUEUE_IDS, p.LOLPROS
 FROM tournament_rosters_last_regular_split AS trlrs
-LEFT JOIN players AS p ON trlrs.PLAYER_LINK = p.OVERVIEW_PAGE
-WHERE p.ROLE IN ('Top', 'Jungle', 'Mid', 'Bot', 'Support')
+LEFT JOIN players AS p ON trlrs.PLAYER_LINK = p.PLAYER
+WHERE trlrs.ROLE IN ('Top', 'Jungle', 'Mid', 'Bot', 'Support')
