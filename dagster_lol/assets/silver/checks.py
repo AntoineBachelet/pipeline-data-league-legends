@@ -1,4 +1,6 @@
-from dagster import asset_check, AssetCheckResult, AssetCheckSeverity
+import os
+import yaml
+from dagster import asset_check, AssetCheckResult, AssetCheckSeverity, AssetCheckExecutionContext, AssetKey, TableSchemaMetadataValue
 
 from ...ressources.snowflake import SnowflakeResource
 from .leaguepedia import (
@@ -8,6 +10,96 @@ from .leaguepedia import (
     PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
 )
 from .schemas import TournamentsSchema, PlayersSchema, TournamentRostersSchema, PlayerSoloqueueAccountsSchema
+
+_CONTRACTS_DIR = os.path.join(os.path.dirname(__file__), "contracts")
+
+# Dagster/pandas type names → datacontract.com type names
+_DAGSTER_TO_CONTRACT_TYPE: dict[str, str] = {
+    "str": "string",
+    "object": "date",       # pandas stores datetime.date values as dtype=object
+    "int64": "integer",
+    "Int64": "integer",
+    "float64": "number",
+    "Float64": "number",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "datetime64[ns]": "timestamp",
+}
+
+
+def _normalize_type(dagster_type: str) -> str:
+    return _DAGSTER_TO_CONTRACT_TYPE.get(dagster_type, dagster_type)
+
+
+def _check_schema_against_contract(
+    context: AssetCheckExecutionContext,
+    asset_key: str,
+    contract_file: str,
+    model_name: str,
+) -> AssetCheckResult:
+    """Compare dagster/column_schema metadata from the latest materialization against a DataContract YAML.
+
+    Args:
+        context: Asset check execution context.
+        asset_key: Dagster asset key string (e.g. "tournaments_silver").
+        contract_file: Filename of the contract YAML in the contracts/ directory.
+        model_name: Key under `models:` in the YAML (e.g. "leaguepedia_tournaments").
+    """
+    contract_path = os.path.join(_CONTRACTS_DIR, contract_file)
+    try:
+        with open(contract_path) as f:
+            contract = yaml.safe_load(f)
+    except FileNotFoundError:
+        return AssetCheckResult(
+            passed=False,
+            severity=AssetCheckSeverity.ERROR,
+            metadata={"error": f"Data contract not found: {contract_path}"},
+        )
+
+    latest = context.instance.get_latest_materialization_event(AssetKey([asset_key]))
+    if not latest:
+        return AssetCheckResult(
+            passed=False,
+            severity=AssetCheckSeverity.ERROR,
+            metadata={"error": "No materialization found for asset"},
+        )
+
+    schema_meta = (
+        latest.asset_materialization.metadata.get("dagster/column_schema")
+        if latest.asset_materialization
+        else None
+    )
+    if not schema_meta or not isinstance(schema_meta, TableSchemaMetadataValue):
+        return AssetCheckResult(
+            passed=False,
+            severity=AssetCheckSeverity.ERROR,
+            metadata={"error": "No dagster/column_schema metadata on latest materialization"},
+        )
+
+    actual = {col.name: _normalize_type(col.type) for col in schema_meta.value.columns}
+    expected = {
+        col_name: col_info.get("type", "unknown")
+        for col_name, col_info in contract["models"][model_name]["fields"].items()
+    }
+
+    missing = [c for c in expected if c not in actual]
+    extra = [c for c in actual if c not in expected]
+    mismatches = [
+        {"column": c, "expected": expected[c], "actual": actual[c]}
+        for c in expected
+        if c in actual and actual[c] != expected[c]
+    ]
+
+    passed = not missing and not extra and not mismatches
+    return AssetCheckResult(
+        passed=passed,
+        severity=AssetCheckSeverity.ERROR,
+        metadata={
+            "mismatches": str(mismatches),
+            "missing_columns": str(missing),
+            "extra_columns": str(extra),
+        },
+    )
 
 
 def _count_duplicates(snowflake: SnowflakeResource, table: str, keys: list[str]) -> int:
@@ -158,13 +250,57 @@ def player_soloqueue_accounts_no_nulls(snowflake: SnowflakeResource) -> AssetChe
     )
 
 
+@asset_check(asset="tournaments_silver", description="Schema matches data contract")
+def tournaments_schema_contract(context: AssetCheckExecutionContext) -> AssetCheckResult:
+    return _check_schema_against_contract(
+        context,
+        asset_key="tournaments_silver",
+        contract_file="tournaments.yaml",
+        model_name="leaguepedia_tournaments",
+    )
+
+
+@asset_check(asset="players_silver", description="Schema matches data contract")
+def players_schema_contract(context: AssetCheckExecutionContext) -> AssetCheckResult:
+    return _check_schema_against_contract(
+        context,
+        asset_key="players_silver",
+        contract_file="players.yaml",
+        model_name="leaguepedia_players",
+    )
+
+
+@asset_check(asset="tournament_rosters_silver", description="Schema matches data contract")
+def tournament_rosters_schema_contract(context: AssetCheckExecutionContext) -> AssetCheckResult:
+    return _check_schema_against_contract(
+        context,
+        asset_key="tournament_rosters_silver",
+        contract_file="tournament_rosters.yaml",
+        model_name="leaguepedia_tournament_rosters",
+    )
+
+
+@asset_check(asset="player_soloqueue_accounts_silver", description="Schema matches data contract")
+def player_soloqueue_accounts_schema_contract(context: AssetCheckExecutionContext) -> AssetCheckResult:
+    return _check_schema_against_contract(
+        context,
+        asset_key="player_soloqueue_accounts_silver",
+        contract_file="player_soloqueue_accounts.yaml",
+        model_name="leaguepedia_player_soloqueue_accounts",
+    )
+
+
 silver_checks = [
     tournaments_no_duplicates,
     tournaments_no_nulls,
+    tournaments_schema_contract,
     players_no_duplicates,
     players_no_nulls,
+    players_schema_contract,
     tournament_rosters_no_duplicates,
     tournament_rosters_no_nulls,
+    tournament_rosters_schema_contract,
     player_soloqueue_accounts_no_duplicates,
     player_soloqueue_accounts_no_nulls,
+    player_soloqueue_accounts_schema_contract,
 ]
