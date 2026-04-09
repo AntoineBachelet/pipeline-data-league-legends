@@ -1,0 +1,99 @@
+dataContractSpecification: 0.9.3
+id: urn:datacontract:silver:leaguepedia_tournaments
+info:
+  title: Leaguepedia Tournaments
+  version: 1.0.0
+  description: Tournois League of Legends nettoyés depuis Leaguepedia (couche silver).
+  owner: pipeline-data
+
+servers:
+  production:
+    type: snowflake
+    account: ${SNOWFLAKE_ACCOUNT}
+    database: ${SNOWFLAKE_DATABASE}
+    schema: SILVER
+    warehouse: ${SNOWFLAKE_WAREHOUSE}
+    table: leaguepedia_tournaments
+
+models:
+  leaguepedia_tournaments:
+    description: Un tournoi par ligne, dédupliqué sur overview_page.
+    fields:
+      name:
+        type: string
+        description: Nom du tournoi.
+        required: false
+      overview_page:
+        type: string
+        description: Identifiant unique Leaguepedia (clé primaire).
+        required: true
+        primary: true
+        unique: true
+      date_start:
+        type: date
+        description: Date de début du tournoi.
+        required: false
+      league:
+        type: string
+        description: Ligue parente.
+        required: false
+      region:
+        type: string
+        description: Région géographique (ex. EMEA, LCK).
+        required: false
+      prizepool:
+        type: string
+        description: Montant de la prize pool (brut, non parsé).
+        required: false
+      currency:
+        type: string
+        description: Devise de la prize pool.
+        required: false
+      country:
+        type: string
+        description: Pays organisateur.
+        required: false
+      rulebook:
+        type: string
+        description: URL vers le rulebook officiel.
+        required: false
+      event_type:
+        type: string
+        description: Type d'événement (ex. Tournament, Showmatch).
+        required: false
+      links:
+        type: string
+        description: Liens externes associés.
+        required: false
+      sponsors:
+        type: string
+        description: Sponsors du tournoi.
+        required: false
+      organizer:
+        type: string
+        description: Organisateur principal.
+        required: false
+      organizers:
+        type: string
+        description: Liste complète des organisateurs.
+        required: false
+      split:
+        type: string
+        description: Split de saison (ex. Spring, Summer).
+        required: false
+      is_qualifier:
+        type: boolean
+        description: Indique si le tournoi est un qualificatif.
+        required: true
+      is_playoffs:
+        type: boolean
+        description: Indique si le tournoi est une phase playoffs.
+        required: true
+      is_official:
+        type: boolean
+        description: Indique si le tournoi est officiel (Riot-sanctioned).
+        required: true
+      year:
+        type: integer
+        description: Année du tournoi.
+        required: true
