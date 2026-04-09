@@ -1,7 +1,7 @@
 from dagster import Definitions
 from dagster import EnvVar
 from dagster_dbt import DbtCliResource
-from .ressources import S3Resource, LeaguepediaResource, SnowflakeResource
+from .ressources import S3Resource, LeaguepediaResource, RiotResource, SnowflakeResource
 from .assets import bronze_assets, silver_assets, silver_checks, lol_dbt_assets, DBT_PROJECT_DIR
 from .jobs import leaguepedia_job, bronze_job
 
@@ -20,6 +20,9 @@ defs = Definitions(
             aws_access_key_id=EnvVar("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=EnvVar("AWS_SECRET_ACCESS_KEY"),
             region_name=EnvVar("AWS_REGION"),
+        ),
+        "riot": RiotResource(
+            api_key=EnvVar("RIOT_API_KEY"),
         ),
         "snowflake": SnowflakeResource(
             account=EnvVar("SNOWFLAKE_ACCOUNT"),
