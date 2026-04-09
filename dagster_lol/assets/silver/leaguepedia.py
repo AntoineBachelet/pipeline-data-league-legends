@@ -213,6 +213,7 @@ def players_silver(
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": PLAYERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
@@ -292,6 +293,7 @@ def tournament_rosters_silver(
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
@@ -414,6 +416,7 @@ def player_soloqueue_accounts_silver(
 
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
