@@ -10,4 +10,5 @@ class PlayerSoloqueueAccountsSchema:
         "game_name": {"type": "str", "missing_value": None},
         "tag_line": {"type": "str", "missing_value": None},
         "full_id": {"type": "str", "missing_value": None},
+        "puuid": {"type": "str", "missing_value": None},
     }
