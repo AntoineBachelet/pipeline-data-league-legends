@@ -1,0 +1,255 @@
+dataContractSpecification: 0.9.3
+id: urn:datacontract:silver:leaguepedia_players
+info:
+  title: Leaguepedia Players
+  version: 1.0.0
+  description: Joueurs professionnels League of Legends nettoyés depuis Leaguepedia (couche silver).
+  owner: pipeline-data
+
+servers:
+  production:
+    type: snowflake
+    account: ${SNOWFLAKE_ACCOUNT}
+    database: ${SNOWFLAKE_DATABASE}
+    schema: SILVER
+    warehouse: ${SNOWFLAKE_WAREHOUSE}
+    table: leaguepedia_players
+
+models:
+  leaguepedia_players:
+    description: Un joueur par ligne, dédupliqué sur overview_page.
+    fields:
+      id:
+        type: string
+        description: Identifiant interne Leaguepedia du joueur.
+        required: false
+      overview_page:
+        type: string
+        description: Identifiant unique Leaguepedia (clé primaire).
+        required: true
+        primary: true
+        unique: true
+      player:
+        type: string
+        description: Pseudo du joueur.
+        required: false
+      image:
+        type: string
+        description: URL de la photo du joueur.
+        required: false
+      name:
+        type: string
+        description: Nom réel du joueur (romanisé).
+        required: false
+      native_name:
+        type: string
+        description: Nom réel dans l'alphabet natif.
+        required: false
+      name_alphabet:
+        type: string
+        description: Alphabet utilisé pour le nom natif.
+        required: false
+      name_full:
+        type: string
+        description: Nom complet.
+        required: false
+      country:
+        type: string
+        description: Pays d'origine.
+        required: false
+      nationality:
+        type: string
+        description: Nationalité(s).
+        required: false
+      nationality_primary:
+        type: string
+        description: Nationalité principale.
+        required: false
+      age:
+        type: integer
+        description: Âge du joueur (0 si inconnu).
+        required: true
+      birthdate:
+        type: date
+        description: Date de naissance.
+        required: false
+      deathdate:
+        type: date
+        description: Date de décès (si applicable).
+        required: false
+      residency_former:
+        type: string
+        description: Ancienne résidence compétitive.
+        required: false
+      team:
+        type: string
+        description: Équipe actuelle principale.
+        required: false
+      team2:
+        type: string
+        description: Équipe actuelle secondaire.
+        required: false
+      current_teams:
+        type: string
+        description: Liste complète des équipes actuelles.
+        required: false
+      team_system:
+        type: string
+        description: Système d'équipe principale.
+        required: false
+      team2_system:
+        type: string
+        description: Système d'équipe secondaire.
+        required: false
+      residency:
+        type: string
+        description: Résidence compétitive actuelle.
+        required: false
+      role:
+        type: string
+        description: Rôle actuel (ex. Top, Jungle, Mid).
+        required: false
+      contract:
+        type: string
+        description: Date de fin de contrat.
+        required: false
+      contract_text:
+        type: string
+        description: Texte libre sur le contrat.
+        required: false
+      fav_champs:
+        type: string
+        description: Champions favoris.
+        required: false
+      soloqueue_ids:
+        type: string
+        description: Comptes soloqueue bruts (non parsés).
+        required: false
+      askfm:
+        type: string
+        description: Profil Ask.fm.
+        required: false
+      bluesky:
+        type: string
+        description: Profil Bluesky.
+        required: false
+      discord:
+        type: string
+        description: Serveur ou handle Discord.
+        required: false
+      facebook:
+        type: string
+        description: Page Facebook.
+        required: false
+      instagram:
+        type: string
+        description: Profil Instagram.
+        required: false
+      lolpros:
+        type: string
+        description: URL du profil lolpros.gg.
+        required: false
+      dpmlol:
+        type: string
+        description: URL du profil DPM.lol.
+        required: false
+      reddit:
+        type: string
+        description: Profil Reddit.
+        required: false
+      snapchat:
+        type: string
+        description: Profil Snapchat.
+        required: false
+      stream:
+        type: string
+        description: URL du stream principal (Twitch, etc.).
+        required: false
+      kick:
+        type: string
+        description: URL du stream Kick.
+        required: false
+      twitter:
+        type: string
+        description: Profil Twitter / X.
+        required: false
+      threads:
+        type: string
+        description: Profil Threads.
+        required: false
+      linkedin:
+        type: string
+        description: Profil LinkedIn.
+        required: false
+      vk:
+        type: string
+        description: Profil VK.
+        required: false
+      website:
+        type: string
+        description: Site web personnel.
+        required: false
+      weibo:
+        type: string
+        description: Profil Weibo.
+        required: false
+      youtube:
+        type: string
+        description: Chaîne YouTube.
+        required: false
+      team_last:
+        type: string
+        description: Dernière équipe connue.
+        required: false
+      role_last:
+        type: string
+        description: Dernier rôle connu.
+        required: false
+      is_retired:
+        type: boolean
+        description: Indique si le joueur est retraité.
+        required: true
+      to_wildrift:
+        type: boolean
+        description: Passé sur Wild Rift.
+        required: true
+      to_valorant:
+        type: boolean
+        description: Passé sur Valorant.
+        required: true
+      to_tft:
+        type: boolean
+        description: Passé sur TFT.
+        required: true
+      to_legends_of_runeterra:
+        type: boolean
+        description: Passé sur Legends of Runeterra.
+        required: true
+      to_2xko:
+        type: boolean
+        description: Passé sur 2XKO.
+        required: true
+      is_personality:
+        type: boolean
+        description: Est une personnalité (caster, coach) plutôt qu'un joueur.
+        required: true
+      is_substitute:
+        type: boolean
+        description: Est un remplaçant.
+        required: true
+      is_trainee:
+        type: boolean
+        description: Est en équipe academy / trainee.
+        required: true
+      is_lowercase:
+        type: boolean
+        description: Pseudo en minuscules (flag Leaguepedia interne).
+        required: true
+      is_auto_team:
+        type: boolean
+        description: Équipe générée automatiquement.
+        required: true
+      is_low_content:
+        type: boolean
+        description: Page à faible contenu éditorial.
+        required: true

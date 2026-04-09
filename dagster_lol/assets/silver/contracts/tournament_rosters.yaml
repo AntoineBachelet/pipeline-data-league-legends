@@ -1,0 +1,60 @@
+dataContractSpecification: 0.9.3
+id: urn:datacontract:silver:leaguepedia_tournament_rosters
+info:
+  title: Leaguepedia Tournament Rosters
+  version: 1.0.0
+  description: Rosters de tournois normalisés (1 ligne par joueur/tournoi) depuis Leaguepedia (couche silver).
+  owner: pipeline-data
+
+servers:
+  production:
+    type: snowflake
+    account: ${SNOWFLAKE_ACCOUNT}
+    database: ${SNOWFLAKE_DATABASE}
+    schema: SILVER
+    warehouse: ${SNOWFLAKE_WAREHOUSE}
+    table: leaguepedia_tournament_rosters
+
+models:
+  leaguepedia_tournament_rosters:
+    description: Un joueur par tournoi par ligne, dédupliqué sur (team, overview_page, player_link).
+    fields:
+      team:
+        type: string
+        description: Nom de l'équipe.
+        required: false
+        primary: true
+      overview_page:
+        type: string
+        description: Identifiant Leaguepedia du tournoi.
+        required: false
+        primary: true
+      player_link:
+        type: string
+        description: Identifiant Leaguepedia du joueur (overview_page du joueur).
+        required: false
+        primary: true
+      role:
+        type: string
+        description: Rôle du joueur dans ce roster (ex. Top, Mid).
+        required: false
+      region:
+        type: string
+        description: Région du tournoi.
+        required: false
+      footnotes:
+        type: string
+        description: Notes et annotations libres.
+        required: false
+      isused:
+        type: string
+        description: Indique si le roster a été utilisé.
+        required: false
+      iscomplete:
+        type: boolean
+        description: Indique si le roster est complet.
+        required: true
+      pageandteam:
+        type: string
+        description: Concaténation overview_page + team (clé composite Leaguepedia).
+        required: false

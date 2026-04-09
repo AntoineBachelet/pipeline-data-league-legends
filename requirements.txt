@@ -10,3 +10,4 @@ dbt-core
 dbt-snowflake 
 dagster-dbt
 pyarrow
+dagster_pandas

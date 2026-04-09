@@ -1,6 +1,7 @@
 from datetime import date
 import pandas as pd
 from dagster import asset, AssetExecutionContext, MaterializeResult, AssetDep
+from dagster_pandas.data_frame import create_table_schema_metadata_from_dataframe
 from ...ressources.riot import RiotResource
 from ...ressources.s3 import S3Resource
 from ...ressources.snowflake import SnowflakeResource
@@ -137,7 +138,6 @@ def tournaments_silver(
     df = deduplicate(context, df, ["overview_page"])
     df = standardize_types(context, df, TournamentsSchema.TOURNAMENTS_SCHEMA)
     df = complete_missing_values(context, df, TournamentsSchema.TOURNAMENTS_SCHEMA)
-
     silver_rows = [
         {k: (None if pd.isna(v) else v) for k, v in row.items()}
         for row in df.to_dict("records")
@@ -158,6 +158,7 @@ def tournaments_silver(
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": TOURNAMENTS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
@@ -212,6 +213,7 @@ def players_silver(
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": PLAYERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
@@ -291,6 +293,7 @@ def tournament_rosters_silver(
     today = date.today().isoformat()
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": TOURNAMENT_ROSTERS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
@@ -413,6 +416,7 @@ def player_soloqueue_accounts_silver(
 
     return MaterializeResult(
         metadata={
+            "dagster/column_schema": create_table_schema_metadata_from_dataframe(df),
             "snowflake_table": PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
             "row_count": len(silver_rows),
             "new_count": merge_result["new_count"],
