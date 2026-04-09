@@ -1,6 +1,7 @@
 from datetime import date
 import pandas as pd
 from dagster import asset, AssetExecutionContext, MaterializeResult, AssetDep
+from ...ressources.riot import RiotResource
 from ...ressources.s3 import S3Resource
 from ...ressources.snowflake import SnowflakeResource
 from .transform import standardize_types, complete_missing_values, deduplicate, parse_soloqueue_ids
@@ -313,6 +314,7 @@ def player_soloqueue_accounts_silver(
     context: AssetExecutionContext,
     s3: S3Resource,
     snowflake: SnowflakeResource,
+    riot: RiotResource,
 ) -> MaterializeResult:
     latest_key = s3.get_latest_key(PLAYERS_BRONZE_PREFIX, extension=".parquet")
     context.log.info(f"Reading latest players bronze file: s3://{s3.bucket_name}/{latest_key}")
@@ -347,6 +349,30 @@ def player_soloqueue_accounts_silver(
             accounts = parse_soloqueue_ids(raw_ids)
         for account in accounts:
             records.append({"player_overview_page": overview_page, **account})
+
+    total = len(records)
+    context.log.info(f"  → {total} soloqueue accounts parsed, fetching PUUIDs from Riot API…")
+    puuid_found = 0
+    puuid_not_found = 0
+    log_every = max(1, total // 10)
+    for i, record in enumerate(records, start=1):
+        puuid = riot.get_puuid(
+            game_name=record["game_name"],
+            tag_line=record.get("tag_line"),
+            region=record.get("region", "EUW"),
+            log=context.log,
+        )
+        record["puuid"] = puuid
+        if puuid:
+            puuid_found += 1
+        else:
+            puuid_not_found += 1
+        if i % log_every == 0 or i == total:
+            context.log.info(
+                "  → PUUID progress: %d/%d (found=%d, not_found=%d)",
+                i, total, puuid_found, puuid_not_found,
+            )
+    context.log.info(f"  → PUUIDs done: {puuid_found} found, {puuid_not_found} not found")
 
     today = date.today().isoformat()
 
