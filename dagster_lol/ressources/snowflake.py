@@ -1,6 +1,7 @@
 from uuid import uuid4
 from dagster import ConfigurableResource
 import snowflake.connector
+import pandas as pd
 
 
 class SnowflakeResource(ConfigurableResource):
@@ -24,6 +25,14 @@ class SnowflakeResource(ConfigurableResource):
         if self.role:
             params["role"] = self.role
         return snowflake.connector.connect(**params)
+
+    def fetch(self, sql: str, params=None) -> pd.DataFrame:
+        """Executes a SELECT query and returns the results as a DataFrame."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                columns = [desc[0].lower() for desc in cur.description]
+                return pd.DataFrame(cur.fetchall(), columns=columns)
 
     def execute(self, sql: str, params=None):
         with self.get_connection() as conn:
