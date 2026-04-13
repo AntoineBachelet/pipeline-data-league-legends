@@ -13,9 +13,16 @@ CREATE TABLE IF NOT EXISTS silver.leaguepedia_player_soloqueue_accounts (
     puuid                   VARCHAR                  COMMENT 'Riot PUUID fetched from Riot Account API v1',
 
     CONSTRAINT pk_player_soloqueue_accounts
-        PRIMARY KEY (player_overview_page, region, game_name)
+        PRIMARY KEY (player_overview_page, region, full_id)
 );
 
 -- Migration : add puuid column if it does not exist yet
 ALTER TABLE silver.leaguepedia_player_soloqueue_accounts
     ADD COLUMN IF NOT EXISTS puuid VARCHAR COMMENT 'Riot PUUID fetched from Riot Account API v1';
+
+-- Migration : change PK from (player_overview_page, region, game_name)
+--             to            (player_overview_page, region, full_id)
+ALTER TABLE silver.leaguepedia_player_soloqueue_accounts DROP PRIMARY KEY;
+ALTER TABLE silver.leaguepedia_player_soloqueue_accounts
+    ADD CONSTRAINT pk_player_soloqueue_accounts
+        PRIMARY KEY (player_overview_page, region, full_id);

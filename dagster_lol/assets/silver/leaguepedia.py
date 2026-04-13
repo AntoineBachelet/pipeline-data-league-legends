@@ -393,7 +393,7 @@ def player_soloqueue_accounts_silver(
         )
 
     df = pd.DataFrame(records, columns=SOLOQUEUE_ACCOUNTS_COLUMNS)
-    df = deduplicate(context, df, ["player_overview_page", "region", "game_name"])
+    df = deduplicate(context, df, ["player_overview_page", "region", "full_id"])
     df = standardize_types(context, df, PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA)
     df = complete_missing_values(context, df, PlayerSoloqueueAccountsSchema.PLAYER_SOLOQUEUE_ACCOUNTS_SCHEMA)
 
@@ -406,7 +406,7 @@ def player_soloqueue_accounts_silver(
         PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
         silver_rows,
         SOLOQUEUE_ACCOUNTS_COLUMNS,
-        key_columns=["player_overview_page", "region", "game_name"],
+        key_columns=["player_overview_page", "region", "full_id"],
     )
     context.log.info(
         f"✅ {len(silver_rows)} rows processed → "

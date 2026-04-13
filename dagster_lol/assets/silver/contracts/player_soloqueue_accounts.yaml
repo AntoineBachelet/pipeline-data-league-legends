@@ -17,7 +17,7 @@ servers:
 
 models:
   leaguepedia_player_soloqueue_accounts:
-    description: Un compte soloqueue par ligne, dédupliqué sur (player_overview_page, region, game_name).
+    description: Un compte soloqueue par ligne, dédupliqué sur (player_overview_page, region, full_id).
     fields:
       player_overview_page:
         type: string
@@ -33,15 +33,15 @@ models:
         type: string
         description: Partie game name du Riot ID (ex. "Faker").
         required: false
-        primary: true
       tag_line:
         type: string
         description: Partie tag line du Riot ID (ex. "KR1").
         required: false
       full_id:
         type: string
-        description: Riot ID complet brut (game_name#tag_line).
+        description: Riot ID complet brut (game_name#tag_line). Clé de déduplication avec player_overview_page et region.
         required: false
+        primary: true
       puuid:
         type: string
         description: PUUID Riot Games (identifiant unique global cross-région).
