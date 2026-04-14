@@ -1,0 +1,248 @@
+from datetime import date
+
+import pandas as pd
+from dagster import asset, AssetExecutionContext, AssetDep, MaterializeResult
+
+from ...ressources.s3 import S3Resource
+from ...ressources.snowflake import SnowflakeResource
+from .transform import standardize_types, complete_missing_values
+from .schemas import RiotMatchSchema, RiotMatchParticipantsSchema, RiotTeamsSchema
+
+MATCH_BRONZE_PREFIX = "bronze/riot/match_data"
+
+RIOT_MATCH_TABLE = "silver.riot_match"
+RIOT_MATCH_PARTICIPANTS_TABLE = "silver.riot_match_participants"
+RIOT_TEAMS_TABLE = "silver.riot_teams"
+
+MATCH_COLUMNS = list(RiotMatchSchema.RIOT_MATCH_SCHEMA.keys())
+PARTICIPANTS_COLUMNS = list(RiotMatchParticipantsSchema.RIOT_MATCH_PARTICIPANTS_SCHEMA.keys())
+TEAMS_COLUMNS = list(RiotTeamsSchema.RIOT_TEAMS_SCHEMA.keys())
+
+SOLOQ_ACCOUNTS_SQL = """
+    SELECT DISTINCT puuid, player FROM SILVER.LEAGUEPEDIA_PLAYER_SOLOQUEUE_ACCOUNTS
+    INNER JOIN SILVER.LEAGUEPEDIA_PLAYERS ON LEAGUEPEDIA_PLAYER_SOLOQUEUE_ACCOUNTS.PLAYER_OVERVIEW_PAGE = LEAGUEPEDIA_PLAYERS.OVERVIEW_PAGE
+    INNER JOIN GOLD.LEC_LAST_ROSTERS ON PLAYER_LINK = LEAGUEPEDIA_PLAYERS.PLAYER
+    WHERE REGION = 'EUW' AND puuid IS NOT NULL;
+"""
+
+EXISTING_MATCH_IDS_SQL = "SELECT match_id FROM silver.riot_match"
+
+
+def _safe_name(name: str) -> str:
+    return name.replace(" ", "_").replace("/", "-")
+
+
+def _extract_match(match_id: str, info: dict) -> dict:
+    return {
+        "match_id":             match_id,
+        "game_id":              info.get("gameId"),
+        "platform_id":          info.get("platformId"),
+        "game_version":         info.get("gameVersion"),
+        "game_mode":            info.get("gameMode"),
+        "game_type":            info.get("gameType"),
+        "queue_id":             info.get("queueId"),
+        "map_id":               info.get("mapId"),
+        "game_duration":        info.get("gameDuration"),
+        "game_start_timestamp": info.get("gameStartTimestamp"),
+        "game_end_timestamp":   info.get("gameEndTimestamp"),
+    }
+
+
+def _extract_participants(match_id: str, participants: list[dict]) -> list[dict]:
+    rows = []
+    for p in participants:
+        rows.append({
+            "match_id":                        match_id,
+            "participant_id":                  p.get("participantId"),
+            "puuid":                           p.get("puuid"),
+            "team_id":                         p.get("teamId"),
+            "riot_id_game_name":               p.get("riotIdGameName"),
+            "riot_id_tagline":                 p.get("riotIdTagline"),
+            "champion_id":                     p.get("championId"),
+            "champion_name":                   p.get("championName"),
+            "team_position":                   p.get("teamPosition"),
+            "individual_position":             p.get("individualPosition"),
+            "win":                             p.get("win"),
+            "kills":                           p.get("kills"),
+            "deaths":                          p.get("deaths"),
+            "assists":                         p.get("assists"),
+            "gold_earned":                     p.get("goldEarned"),
+            "total_damage_dealt_to_champions": p.get("totalDamageDealtToChampions"),
+            "total_minions_killed":            p.get("totalMinionsKilled"),
+            "neutral_minions_killed":          p.get("neutralMinionsKilled"),
+            "vision_score":                    p.get("visionScore"),
+            "wards_placed":                    p.get("wardsPlaced"),
+            "wards_killed":                    p.get("wardsKilled"),
+            "detector_wards_placed":           p.get("detectorWardsPlaced"),
+        })
+    return rows
+
+
+def _extract_teams(match_id: str, teams: list[dict]) -> list[dict]:
+    rows = []
+    for team in teams:
+        bans = sorted(team.get("bans", []), key=lambda b: b.get("pickTurn", 0))
+        ban_ids = [b.get("championId") for b in bans]
+        ban_ids += [None] * (5 - len(ban_ids))
+
+        objectives = team.get("objectives", {})
+        rows.append({
+            "match_id":                     match_id,
+            "team_id":                      team.get("teamId"),
+            "win":                          team.get("win"),
+            "ban_1_champion_id":            ban_ids[0],
+            "ban_2_champion_id":            ban_ids[1],
+            "ban_3_champion_id":            ban_ids[2],
+            "ban_4_champion_id":            ban_ids[3],
+            "ban_5_champion_id":            ban_ids[4],
+            "objectives_baron_kills":       objectives.get("baron", {}).get("kills"),
+            "objectives_dragon_kills":      objectives.get("dragon", {}).get("kills"),
+            "objectives_tower_kills":       objectives.get("tower", {}).get("kills"),
+            "objectives_inhibitor_kills":   objectives.get("inhibitor", {}).get("kills"),
+            "objectives_rift_herald_kills": objectives.get("riftHerald", {}).get("kills"),
+            "objectives_champion_kills":    objectives.get("champion", {}).get("kills"),
+        })
+    return rows
+
+
+@asset(
+    description="Matchs Soloq normalisés depuis le bronze S3 vers Snowflake (3 tables : match, participants, teams)",
+    deps=[AssetDep("matchs_details_bronze")],
+)
+def riot_matches_silver(
+    context: AssetExecutionContext,
+    s3: S3Resource,
+    snowflake: SnowflakeResource,
+) -> MaterializeResult:
+    # Récupération des match_ids déjà en base pour ne traiter que les nouveaux
+    df_existing = snowflake.fetch(EXISTING_MATCH_IDS_SQL)
+    existing_match_ids: set[str] = set(df_existing["match_id"].tolist())
+    context.log.info("  → %d match_ids already in Snowflake", len(existing_match_ids))
+
+    soloq_accounts = snowflake.fetch(SOLOQ_ACCOUNTS_SQL)
+    context.log.info("  → %d accounts to process", len(soloq_accounts))
+
+    match_rows: list[dict] = []
+    participant_rows: list[dict] = []
+    team_rows: list[dict] = []
+    # Set local pour dédupliquer les matchs joués par plusieurs joueurs suivis
+    seen_match_ids: set[str] = set()
+    files_read = 0
+    files_skipped = 0
+
+    for _, account_row in soloq_accounts.iterrows():
+        puuid = account_row["puuid"]
+        player = account_row["player"]
+        safe_player = _safe_name(player)
+
+        details_prefix = f"{MATCH_BRONZE_PREFIX}/{safe_player}/{puuid}/match_details/"
+        response = s3.get_client().list_objects_v2(Bucket=s3.bucket_name, Prefix=details_prefix)
+        objects = response.get("Contents", [])
+
+        if not objects:
+            context.log.debug("No match details found for %s", player)
+            continue
+
+        context.log.info("  → %d match files found for %s", len(objects), player)
+
+        for obj in objects:
+            match_id = obj["Key"].split("/")[-1].replace(".parquet", "")
+
+            if match_id in existing_match_ids:
+                files_skipped += 1
+                context.log.debug("  → Skipping already stored match %s", match_id)
+                continue
+
+            if match_id in seen_match_ids:
+                # Match déjà traité dans ce run via un autre joueur de la même partie
+                files_skipped += 1
+                context.log.debug("  → Skipping duplicate match %s (already seen this run)", match_id)
+                continue
+
+            df = s3.download_parquet(obj["Key"])
+            if df.empty:
+                continue
+
+            raw = df.to_dict("records")[0]
+            info = raw.get("info", {})
+            match_id_from_meta = raw.get("metadata", {}).get("matchId") or match_id
+
+            match_rows.append(_extract_match(match_id_from_meta, info))
+            participant_rows.extend(_extract_participants(match_id_from_meta, info.get("participants", [])))
+            team_rows.extend(_extract_teams(match_id_from_meta, info.get("teams", [])))
+
+            seen_match_ids.add(match_id)
+            files_read += 1
+
+    context.log.info(
+        "  → %d new files read, %d skipped → %d matches, %d participants, %d team records",
+        files_read, files_skipped, len(match_rows), len(participant_rows), len(team_rows),
+    )
+
+    today = date.today().isoformat()
+
+    if not match_rows:
+        context.log.info("No new match data to store")
+        return MaterializeResult(
+            metadata={
+                "files_read": 0,
+                "files_skipped": files_skipped,
+                "ingestion_date": today,
+            }
+        )
+
+    # --- RIOT_MATCH ---
+    df_match = pd.DataFrame(match_rows, columns=MATCH_COLUMNS)
+    df_match = standardize_types(context, df_match, RiotMatchSchema.RIOT_MATCH_SCHEMA)
+    df_match = complete_missing_values(context, df_match, RiotMatchSchema.RIOT_MATCH_SCHEMA)
+    silver_matches = [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in df_match.to_dict("records")]
+
+    result_match = snowflake.merge(
+        RIOT_MATCH_TABLE, silver_matches, MATCH_COLUMNS, key_columns=["match_id"]
+    )
+    context.log.info(
+        "✅ riot_match: %d new, %d updated → %s",
+        result_match["new_count"], result_match["updated_count"], RIOT_MATCH_TABLE,
+    )
+
+    # --- RIOT_MATCH_PARTICIPANTS ---
+    df_participants = pd.DataFrame(participant_rows, columns=PARTICIPANTS_COLUMNS)
+    df_participants = standardize_types(context, df_participants, RiotMatchParticipantsSchema.RIOT_MATCH_PARTICIPANTS_SCHEMA)
+    df_participants = complete_missing_values(context, df_participants, RiotMatchParticipantsSchema.RIOT_MATCH_PARTICIPANTS_SCHEMA)
+    silver_participants = [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in df_participants.to_dict("records")]
+
+    result_participants = snowflake.merge(
+        RIOT_MATCH_PARTICIPANTS_TABLE, silver_participants, PARTICIPANTS_COLUMNS,
+        key_columns=["match_id", "participant_id"]
+    )
+    context.log.info(
+        "✅ riot_match_participants: %d new, %d updated → %s",
+        result_participants["new_count"], result_participants["updated_count"], RIOT_MATCH_PARTICIPANTS_TABLE,
+    )
+
+    # --- RIOT_TEAMS ---
+    df_teams = pd.DataFrame(team_rows, columns=TEAMS_COLUMNS)
+    df_teams = standardize_types(context, df_teams, RiotTeamsSchema.RIOT_TEAMS_SCHEMA)
+    df_teams = complete_missing_values(context, df_teams, RiotTeamsSchema.RIOT_TEAMS_SCHEMA)
+    silver_teams = [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in df_teams.to_dict("records")]
+
+    result_teams = snowflake.merge(
+        RIOT_TEAMS_TABLE, silver_teams, TEAMS_COLUMNS, key_columns=["match_id", "team_id"]
+    )
+    context.log.info(
+        "✅ riot_teams: %d new, %d updated → %s",
+        result_teams["new_count"], result_teams["updated_count"], RIOT_TEAMS_TABLE,
+    )
+
+    return MaterializeResult(
+        metadata={
+            "files_read": files_read,
+            "files_skipped": files_skipped,
+            "match_count": len(silver_matches),
+            "participant_count": len(silver_participants),
+            "team_count": len(silver_teams),
+            "match_new": result_match["new_count"],
+            "match_updated": result_match["updated_count"],
+            "ingestion_date": today,
+        }
+    )
