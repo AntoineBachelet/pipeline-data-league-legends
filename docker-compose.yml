@@ -3,6 +3,20 @@ x-postgres-env: &postgres-env
   DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD}
   DAGSTER_POSTGRES_DB: ${DAGSTER_POSTGRES_DB}
 
+x-superset-env: &superset-env
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+  SUPERSET_POSTGRES_USER: ${SUPERSET_POSTGRES_USER}
+  SUPERSET_POSTGRES_PASSWORD: ${SUPERSET_POSTGRES_PASSWORD}
+  SUPERSET_POSTGRES_DB: ${SUPERSET_POSTGRES_DB}
+  SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME}
+  SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+  SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL}
+  SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+  SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+  SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+  SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+  SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+
 x-common-env: &common-env
   DAGSTER_POSTGRES_USER: ${DAGSTER_POSTGRES_USER}
   DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD}
@@ -112,6 +126,93 @@ services:
       user_code:
         condition: service_started
 
+  # ── Superset Postgres (métadonnées) ───────────────────────────────────────
+  superset_postgresql:
+    image: postgres:15
+    container_name: lol_superset_postgresql
+    environment:
+      POSTGRES_USER: ${SUPERSET_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${SUPERSET_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${SUPERSET_POSTGRES_DB}
+    volumes:
+      - superset_postgres_data:/var/lib/postgresql/data
+    networks:
+      - lol_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SUPERSET_POSTGRES_USER} -d ${SUPERSET_POSTGRES_DB}"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+
+  # ── Redis (cache Superset) ─────────────────────────────────────────────────
+  superset_redis:
+    image: redis:7-alpine
+    container_name: lol_superset_redis
+    networks:
+      - lol_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Superset Init (one-shot) ───────────────────────────────────────────────
+  superset_init:
+    build:
+      context: .
+      dockerfile: Dockerfile_superset
+    container_name: lol_superset_init
+    command: ["bash", "/app/superset_init.sh"]
+    environment:
+      <<: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./superset/superset_init.sh:/app/superset_init.sh:ro
+      - ./superset/snowflake_import.py:/app/snowflake_import.py:ro
+    networks:
+      - lol_network
+    depends_on:
+      superset_postgresql:
+        condition: service_healthy
+      superset_redis:
+        condition: service_healthy
+
+  # ── Superset Webserver ─────────────────────────────────────────────────────
+  superset_webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile_superset
+    container_name: lol_superset_webserver
+    command:
+      - gunicorn
+      - "--bind=0.0.0.0:8088"
+      - "--timeout=120"
+      - "--workers=2"
+      - "--worker-class=gthread"
+      - "--threads=10"
+      - "superset.app:create_app()"
+    ports:
+      - "8088:8088"
+    environment:
+      <<: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    networks:
+      - lol_network
+    depends_on:
+      superset_init:
+        condition: service_completed_successfully
+      superset_postgresql:
+        condition: service_healthy
+      superset_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 networks:
   lol_network:
     driver: bridge
@@ -119,3 +220,5 @@ networks:
 
 volumes:
   postgres_data:
+  superset_postgres_data:
+  superset_home:
