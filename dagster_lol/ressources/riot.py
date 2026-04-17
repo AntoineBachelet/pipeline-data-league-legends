@@ -293,3 +293,67 @@ class RiotResource(ConfigurableResource):
 
         log.warning("All %d attempts failed for %s — returning None", _MAX_RETRIES, match_id)
         return None
+
+    def get_match_timeline(self, match_id: str, log: Any) -> dict | None:
+        """Fetch the timeline of a match (frame-by-frame events).
+
+        The regional cluster is inferred from the match_id prefix (e.g. "EUW1_xxx" → europe).
+
+        Args:
+            match_id: Riot match ID (e.g. "EUW1_7819128666").
+            log: Dagster context.log passed from the calling asset.
+
+        Returns:
+            Dict with full timeline data, or None if not found or request failed.
+        """
+        prefix = match_id.split("_")[0]
+        cluster = MATCH_ID_PREFIX_TO_CLUSTER.get(prefix, DEFAULT_CLUSTER)
+        url = f"https://{cluster}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline"
+
+        log.debug("GET timeline %s (cluster=%s)", match_id, cluster)
+
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                response = requests.get(url, params={"api_key": self.api_key}, timeout=10)
+                log.debug(
+                    "  → HTTP %d [%dms] for %s/timeline (attempt %d)",
+                    response.status_code,
+                    response.elapsed.microseconds // 1000,
+                    match_id,
+                    attempt,
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+
+                if response.status_code == 404:
+                    log.debug("  → Timeline not found: %s", match_id)
+                    return None
+
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 5))
+                    log.warning(
+                        "Rate limit hit (429) for %s/timeline — waiting %ds (attempt %d/%d)",
+                        match_id,
+                        retry_after,
+                        attempt,
+                        _MAX_RETRIES,
+                    )
+                    time.sleep(retry_after)
+                    continue
+
+                response.raise_for_status()
+
+            except requests.RequestException as exc:
+                log.warning(
+                    "Request failed for %s/timeline (attempt %d/%d): %s",
+                    match_id,
+                    attempt,
+                    _MAX_RETRIES,
+                    exc,
+                )
+                if attempt < _MAX_RETRIES:
+                    time.sleep(2 ** attempt)
+
+        log.warning("All %d attempts failed for %s/timeline — returning None", _MAX_RETRIES, match_id)
+        return None

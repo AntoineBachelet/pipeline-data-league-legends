@@ -136,3 +136,75 @@ def matchs_details_bronze(
             "ingestion_date": date.today().isoformat(),
         }
     )
+
+
+@asset(
+    description="Récupération des timelines de matchs Soloq depuis l'API Riot et stockage Parquet sur S3",
+    deps=[AssetDep("matchs_details_bronze")],
+)
+def matchs_timeline_bronze(
+    context: AssetExecutionContext,
+    riot: RiotResource,
+    snowflake: SnowflakeResource,
+    s3: S3Resource,
+) -> MaterializeResult:
+    soloq_accounts = snowflake.fetch(SOLOQ_ACCOUNTS_SQL)
+    context.log.info("  → %d accounts to process", len(soloq_accounts))
+
+    total_fetched = 0
+    total_skipped = 0
+    total_uploaded = 0
+
+    for _, account_row in soloq_accounts.iterrows():
+        puuid = account_row["puuid"]
+        player = account_row["player"]
+        safe_player = safe_name(player)
+
+        match_ids_prefix = f"{MATCH_BRONZE_PREFIX}/{safe_player}/{puuid}/match_ids/"
+        try:
+            latest_key = s3.get_latest_key(match_ids_prefix, extension=".parquet")
+        except FileNotFoundError:
+            context.log.warning("No match ids file found for %s — skipping", player)
+            continue
+
+        df_ids = s3.download_parquet(latest_key)
+        match_ids = df_ids["match_id"].tolist()
+        context.log.info("  → %d match ids loaded for %s", len(match_ids), player)
+
+        timeline_prefix = f"{MATCH_BRONZE_PREFIX}/{safe_player}/{puuid}/match_timeline/"
+        existing_objects = s3.get_client().list_objects_v2(
+            Bucket=s3.bucket_name, Prefix=timeline_prefix
+        )
+        existing_ids = {
+            obj["Key"].split("/")[-1].replace(".parquet", "")
+            for obj in existing_objects.get("Contents", [])
+        }
+
+        new_ids = [mid for mid in match_ids if mid not in existing_ids]
+        context.log.info(
+            "  → %d new / %d already stored for %s",
+            len(new_ids), len(existing_ids), player,
+        )
+        total_skipped += len(existing_ids)
+
+        for match_id in new_ids:
+            timeline_data = riot.get_match_timeline(match_id, context.log)
+            if timeline_data is None:
+                continue
+
+            s3_key = f"{timeline_prefix}{match_id}.parquet"
+            s3.upload_parquet([timeline_data], s3_key)
+            context.log.debug("  → Uploaded %s", s3_key)
+
+            total_fetched += 1
+            total_uploaded += 1
+
+    return MaterializeResult(
+        metadata={
+            "account_count": len(soloq_accounts),
+            "timelines_fetched": total_fetched,
+            "timelines_skipped": total_skipped,
+            "files_uploaded": total_uploaded,
+            "ingestion_date": date.today().isoformat(),
+        }
+    )
