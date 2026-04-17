@@ -25,4 +25,6 @@ class RiotMatchParticipantsSchema:
         "wards_placed":                      {"type": "int", "missing_value": 0},
         "wards_killed":                      {"type": "int", "missing_value": 0},
         "detector_wards_placed":             {"type": "int", "missing_value": 0},
+        "cs_diff_at_15":                     {"type": "int", "missing_value": None},
+        "gold_diff_at_15":                   {"type": "int", "missing_value": None},
     }

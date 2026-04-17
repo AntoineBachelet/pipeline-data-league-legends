@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Optional
 
 import pandas as pd
 from dagster import asset, AssetExecutionContext, AssetDep, MaterializeResult
@@ -25,11 +26,70 @@ SOLOQ_ACCOUNTS_SQL = """
     WHERE REGION = 'EUW' AND puuid IS NOT NULL;
 """
 
-EXISTING_MATCH_IDS_SQL = "SELECT match_id FROM silver.riot_match"
+# A match is considered fully processed only when timeline diffs are already computed.
+# Matches already in DB but with NULL diffs will be reprocessed and updated via MERGE.
+EXISTING_MATCH_IDS_SQL = """
+    SELECT DISTINCT match_id
+    FROM silver.riot_match_participants
+    WHERE cs_diff_at_15 IS NOT NULL
+"""
 
 
 def _safe_name(name: str) -> str:
     return name.replace(" ", "_").replace("/", "-")
+
+
+def _compute_at_15_diffs(timeline_data: dict, participants: list[dict]) -> dict[int, dict]:
+    """Compute cs_diff_at_15 and gold_diff_at_15 for each participant.
+
+    Uses the timeline frame at exactly 15 minutes (derived from frameInterval).
+    Diffs are computed against the lane opponent (same teamPosition, opposite teamId).
+    Returns a dict mapping participantId → {cs_diff_at_15, gold_diff_at_15},
+    or an empty dict if the game ended before 15 minutes or data is missing.
+    """
+    info = timeline_data.get("info", {})
+    frame_interval_ms = info.get("frameInterval", 60000)
+    frames = info.get("frames", [])
+
+    target_index = (15 * 60 * 1000) // frame_interval_ms
+    if target_index >= len(frames):
+        return {}
+
+    participant_frames = frames[target_index].get("participantFrames", {})
+
+    # Build position → {teamId: participantId} to find lane opponents
+    position_map: dict[str, dict[int, int]] = {}
+    for p in participants:
+        pos = p.get("teamPosition") or p.get("individualPosition")
+        if not pos or pos in ("", "Invalid"):
+            continue
+        position_map.setdefault(pos, {})[p["teamId"]] = p["participantId"]
+
+    diffs: dict[int, dict] = {}
+    for p in participants:
+        pid = p["participantId"]
+        pos = p.get("teamPosition") or p.get("individualPosition")
+        team_id = p["teamId"]
+
+        if not pos or pos not in position_map:
+            continue
+
+        lane_teams = position_map[pos]
+        if len(lane_teams) != 2:
+            continue
+
+        opponent_team_id = next(t for t in lane_teams if t != team_id)
+        opponent_pid = lane_teams[opponent_team_id]
+
+        my_frame = participant_frames.get(str(pid), {})
+        opp_frame = participant_frames.get(str(opponent_pid), {})
+
+        diffs[pid] = {
+            "cs_diff_at_15":   my_frame.get("minionsKilled", 0) - opp_frame.get("minionsKilled", 0),
+            "gold_diff_at_15": my_frame.get("totalGold", 0) - opp_frame.get("totalGold", 0),
+        }
+
+    return diffs
 
 
 def _extract_match(match_id: str, info: dict) -> dict:
@@ -48,12 +108,19 @@ def _extract_match(match_id: str, info: dict) -> dict:
     }
 
 
-def _extract_participants(match_id: str, participants: list[dict]) -> list[dict]:
+def _extract_participants(
+    match_id: str,
+    participants: list[dict],
+    at_15_diffs: Optional[dict[int, dict]] = None,
+) -> list[dict]:
+    at_15_diffs = at_15_diffs or {}
     rows = []
     for p in participants:
+        pid = int(p["participantId"])
+        diffs = at_15_diffs.get(pid, {})
         rows.append({
             "match_id":                        match_id,
-            "participant_id":                  p.get("participantId"),
+            "participant_id":                  pid,
             "puuid":                           p.get("puuid"),
             "team_id":                         p.get("teamId"),
             "riot_id_game_name":               p.get("riotIdGameName"),
@@ -74,6 +141,8 @@ def _extract_participants(match_id: str, participants: list[dict]) -> list[dict]
             "wards_placed":                    p.get("wardsPlaced"),
             "wards_killed":                    p.get("wardsKilled"),
             "detector_wards_placed":           p.get("detectorWardsPlaced"),
+            "cs_diff_at_15":                   diffs.get("cs_diff_at_15"),
+            "gold_diff_at_15":                 diffs.get("gold_diff_at_15"),
         })
     return rows
 
@@ -114,7 +183,6 @@ def riot_matches_silver(
     s3: S3Resource,
     snowflake: SnowflakeResource,
 ) -> MaterializeResult:
-    # Récupération des match_ids déjà en base pour ne traiter que les nouveaux
     df_existing = snowflake.fetch(EXISTING_MATCH_IDS_SQL)
     existing_match_ids: set[str] = set(df_existing["match_id"].tolist())
     context.log.info("  → %d match_ids already in Snowflake", len(existing_match_ids))
@@ -125,10 +193,10 @@ def riot_matches_silver(
     match_rows: list[dict] = []
     participant_rows: list[dict] = []
     team_rows: list[dict] = []
-    # Set local pour dédupliquer les matchs joués par plusieurs joueurs suivis
     seen_match_ids: set[str] = set()
     files_read = 0
     files_skipped = 0
+    timelines_found = 0
 
     for _, account_row in soloq_accounts.iterrows():
         puuid = account_row["puuid"]
@@ -148,15 +216,9 @@ def riot_matches_silver(
         for obj in objects:
             match_id = obj["Key"].split("/")[-1].replace(".parquet", "")
 
-            if match_id in existing_match_ids:
+            if match_id in existing_match_ids or match_id in seen_match_ids:
                 files_skipped += 1
-                context.log.debug("  → Skipping already stored match %s", match_id)
-                continue
-
-            if match_id in seen_match_ids:
-                # Match déjà traité dans ce run via un autre joueur de la même partie
-                files_skipped += 1
-                context.log.debug("  → Skipping duplicate match %s (already seen this run)", match_id)
+                context.log.debug("  → Skipping %s", match_id)
                 continue
 
             df = s3.download_parquet(obj["Key"])
@@ -167,16 +229,29 @@ def riot_matches_silver(
             info = raw.get("info", {})
             match_id_from_meta = raw.get("metadata", {}).get("matchId") or match_id
 
+            # Try to load the corresponding timeline for diff computation
+            at_15_diffs: dict[int, dict] = {}
+            timeline_key = f"{MATCH_BRONZE_PREFIX}/{safe_player}/{puuid}/match_timeline/{match_id}.parquet"
+            try:
+                df_timeline = s3.download_parquet(timeline_key)
+                if not df_timeline.empty:
+                    timeline_raw = df_timeline.to_dict("records")[0]
+                    at_15_diffs = _compute_at_15_diffs(timeline_raw, info.get("participants", []))
+                    timelines_found += 1
+                    context.log.debug("  → Timeline loaded for %s (%d diffs computed)", match_id, len(at_15_diffs))
+            except Exception:
+                context.log.debug("  → No timeline available for %s", match_id)
+
             match_rows.append(_extract_match(match_id_from_meta, info))
-            participant_rows.extend(_extract_participants(match_id_from_meta, info.get("participants", [])))
+            participant_rows.extend(_extract_participants(match_id_from_meta, info.get("participants", []), at_15_diffs))
             team_rows.extend(_extract_teams(match_id_from_meta, info.get("teams", [])))
 
             seen_match_ids.add(match_id)
             files_read += 1
 
     context.log.info(
-        "  → %d new files read, %d skipped → %d matches, %d participants, %d team records",
-        files_read, files_skipped, len(match_rows), len(participant_rows), len(team_rows),
+        "  → %d new files read, %d skipped, %d timelines loaded → %d matches, %d participants, %d team records",
+        files_read, files_skipped, timelines_found, len(match_rows), len(participant_rows), len(team_rows),
     )
 
     today = date.today().isoformat()
@@ -238,6 +313,7 @@ def riot_matches_silver(
         metadata={
             "files_read": files_read,
             "files_skipped": files_skipped,
+            "timelines_loaded": timelines_found,
             "match_count": len(silver_matches),
             "participant_count": len(silver_participants),
             "team_count": len(silver_teams),
