@@ -311,7 +311,7 @@ SOLOQUEUE_ACCOUNTS_COLUMNS = list(
 
 @asset(
     description="Comptes soloqueue normalisés (1 ligne/compte) depuis players_silver vers Snowflake",
-    deps=[AssetDep("players_silver")],
+    deps=[AssetDep("players_silver"), AssetDep("lolpros_ladder_bronze")],
 )
 def player_soloqueue_accounts_silver(
     context: AssetExecutionContext,

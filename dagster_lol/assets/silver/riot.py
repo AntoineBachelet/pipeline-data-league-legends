@@ -176,7 +176,7 @@ def _extract_teams(match_id: str, teams: list[dict]) -> list[dict]:
 
 @asset(
     description="Matchs Soloq normalisés depuis le bronze S3 vers Snowflake (3 tables : match, participants, teams)",
-    deps=[AssetDep("matchs_details_bronze")],
+    deps=[AssetDep("matchs_details_bronze"), AssetDep("matchs_timeline_bronze")],
 )
 def riot_matches_silver(
     context: AssetExecutionContext,
