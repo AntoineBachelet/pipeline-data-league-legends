@@ -218,13 +218,13 @@ def tournament_rosters_no_nulls(snowflake: SnowflakeResource) -> AssetCheckResul
 
 @asset_check(
     asset="player_soloqueue_accounts_silver",
-    description="No duplicate (player_overview_page, region, game_name) in player_soloqueue_accounts_silver",
+    description="No duplicate (player_overview_page, region, full_id) in player_soloqueue_accounts_silver",
 )
 def player_soloqueue_accounts_no_duplicates(snowflake: SnowflakeResource) -> AssetCheckResult:
     count = _count_duplicates(
         snowflake,
         PLAYER_SOLOQUEUE_ACCOUNTS_SNOWFLAKE_TABLE,
-        ["player_overview_page", "region", "game_name"],
+        ["player_overview_page", "region", "full_id"],
     )
     return AssetCheckResult(
         passed=count == 0,
