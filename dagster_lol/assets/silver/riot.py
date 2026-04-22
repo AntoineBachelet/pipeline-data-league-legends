@@ -7,9 +7,13 @@ from dagster import asset, AssetExecutionContext, AssetDep, MaterializeResult
 from ...ressources.s3 import S3Resource
 from ...ressources.snowflake import SnowflakeResource
 from .transform import standardize_types, complete_missing_values
-from .schemas import RiotMatchSchema, RiotMatchParticipantsSchema, RiotTeamsSchema
+from .schemas import RiotMatchSchema, RiotMatchParticipantsSchema, RiotTeamsSchema, RiotPlayerRankingsSchema
 
 MATCH_BRONZE_PREFIX = "bronze/riot/match_data"
+RANKINGS_BRONZE_PREFIX = "bronze/riot/rankings"
+
+RIOT_PLAYER_RANKINGS_TABLE = "silver.riot_player_rankings"
+RANKINGS_COLUMNS = list(RiotPlayerRankingsSchema.RIOT_PLAYER_RANKINGS_SCHEMA.keys())
 
 RIOT_MATCH_TABLE = "silver.riot_match"
 RIOT_MATCH_PARTICIPANTS_TABLE = "silver.riot_match_participants"
@@ -319,6 +323,82 @@ def riot_matches_silver(
             "team_count": len(silver_teams),
             "match_new": result_match["new_count"],
             "match_updated": result_match["updated_count"],
+            "ingestion_date": today,
+        }
+    )
+
+
+@asset(
+    description="Classement ranked des joueurs normalisé depuis le bronze S3 vers Snowflake (snapshot quotidien par joueur et type de file)",
+    deps=[AssetDep("player_rankings_bronze")],
+)
+def player_rankings_silver(
+    context: AssetExecutionContext,
+    s3: S3Resource,
+    snowflake: SnowflakeResource,
+) -> MaterializeResult:
+    soloq_accounts = snowflake.fetch(SOLOQ_ACCOUNTS_SQL)
+    context.log.info("  → %d accounts to process", len(soloq_accounts))
+
+    today = date.today().isoformat()
+    ranking_rows: list[dict] = []
+    files_read = 0
+    files_skipped = 0
+
+    for _, account_row in soloq_accounts.iterrows():
+        puuid = account_row["puuid"]
+        player = account_row["player"]
+        safe_player = _safe_name(player)
+
+        snapshot_prefix = f"{RANKINGS_BRONZE_PREFIX}/{safe_player}/{puuid}/"
+        try:
+            latest_key = s3.get_latest_key(snapshot_prefix, extension=".parquet")
+            df = s3.download_parquet(latest_key)
+        except FileNotFoundError:
+            context.log.warning("No ranking snapshot found for %s — skipping", player)
+            files_skipped += 1
+            continue
+
+        if df.empty:
+            files_skipped += 1
+            continue
+
+        for row in df.to_dict("records"):
+            row["snapshot_date"] = today
+            ranking_rows.append(row)
+
+        files_read += 1
+        context.log.info("  → %d queue entries loaded for %s", len(df), player)
+
+    context.log.info("  → %d files read, %d skipped → %d total entries", files_read, files_skipped, len(ranking_rows))
+
+    if not ranking_rows:
+        context.log.info("No ranking data to store")
+        return MaterializeResult(
+            metadata={"files_read": 0, "files_skipped": files_skipped, "ingestion_date": today}
+        )
+
+    df_rankings = pd.DataFrame(ranking_rows, columns=RANKINGS_COLUMNS)
+    df_rankings = standardize_types(context, df_rankings, RiotPlayerRankingsSchema.RIOT_PLAYER_RANKINGS_SCHEMA)
+    df_rankings = complete_missing_values(context, df_rankings, RiotPlayerRankingsSchema.RIOT_PLAYER_RANKINGS_SCHEMA)
+    silver_rankings = [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in df_rankings.to_dict("records")]
+
+    result = snowflake.merge(
+        RIOT_PLAYER_RANKINGS_TABLE, silver_rankings, RANKINGS_COLUMNS,
+        key_columns=["puuid", "queue_type", "snapshot_date"]
+    )
+    context.log.info(
+        "✅ riot_player_rankings: %d new, %d updated → %s",
+        result["new_count"], result["updated_count"], RIOT_PLAYER_RANKINGS_TABLE,
+    )
+
+    return MaterializeResult(
+        metadata={
+            "files_read": files_read,
+            "files_skipped": files_skipped,
+            "entry_count": len(silver_rankings),
+            "new_count": result["new_count"],
+            "updated_count": result["updated_count"],
             "ingestion_date": today,
         }
     )
