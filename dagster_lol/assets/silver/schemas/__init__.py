@@ -5,3 +5,4 @@ from .player_soloqueue_accounts import PlayerSoloqueueAccountsSchema
 from .riot_match import RiotMatchSchema
 from .riot_match_participants import RiotMatchParticipantsSchema
 from .riot_teams import RiotTeamsSchema
+from .riot_player_rankings import RiotPlayerRankingsSchema

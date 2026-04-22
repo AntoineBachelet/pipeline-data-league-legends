@@ -14,6 +14,7 @@ SOLOQ_ACCOUNTS_SQL = """
 """
 
 MATCH_BRONZE_PREFIX = "bronze/riot/match_data"
+RANKINGS_BRONZE_PREFIX = "bronze/riot/rankings"
 
 
 @asset(
@@ -206,5 +207,68 @@ def matchs_timeline_bronze(
             "timelines_skipped": total_skipped,
             "files_uploaded": total_uploaded,
             "ingestion_date": date.today().isoformat(),
+        }
+    )
+
+
+@asset(
+    description="Snapshot quotidien du classement ranked de chaque joueur EUW référencé via l'API Riot (league/v4/entries/by-puuid)",
+)
+def player_rankings_bronze(
+    context: AssetExecutionContext,
+    riot: RiotResource,
+    snowflake: SnowflakeResource,
+    s3: S3Resource,
+) -> MaterializeResult:
+    soloq_accounts = snowflake.fetch(SOLOQ_ACCOUNTS_SQL)
+    context.log.info("  → %d accounts to process", len(soloq_accounts))
+
+    today = date.today().isoformat()
+    total_entries = 0
+    uploaded_keys = []
+
+    for _, account_row in soloq_accounts.iterrows():
+        puuid = account_row["puuid"]
+        player = account_row["player"]
+
+        context.log.info("Fetching ranking for %s (puuid=%s…)", player, puuid[:8])
+        entries = riot.get_player_ranking(puuid, "EUW", context.log)
+        context.log.info("  → %d queue entries found for %s", len(entries), player)
+
+        if not entries:
+            continue
+
+        rows = [
+            {
+                "puuid": puuid,
+                "player": player,
+                "queue_type": e.get("queueType"),
+                "tier": e.get("tier"),
+                "rank": e.get("rank"),
+                "league_points": e.get("leaguePoints"),
+                "wins": e.get("wins"),
+                "losses": e.get("losses"),
+                "veteran": e.get("veteran"),
+                "inactive": e.get("inactive"),
+                "fresh_blood": e.get("freshBlood"),
+                "hot_streak": e.get("hotStreak"),
+            }
+            for e in entries
+        ]
+
+        safe_player = safe_name(player)
+        s3_key = f"{RANKINGS_BRONZE_PREFIX}/{safe_player}/{puuid}/{today}.parquet"
+        s3.upload_parquet(rows, s3_key)
+        context.log.info("  → Uploaded to s3://%s/%s", s3.bucket_name, s3_key)
+
+        total_entries += len(rows)
+        uploaded_keys.append(s3_key)
+
+    return MaterializeResult(
+        metadata={
+            "account_count": len(soloq_accounts),
+            "total_entries": total_entries,
+            "files_uploaded": len(uploaded_keys),
+            "ingestion_date": today,
         }
     )
