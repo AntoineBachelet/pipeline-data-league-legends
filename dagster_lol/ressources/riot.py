@@ -5,6 +5,27 @@ from typing import Any
 import requests
 from dagster import ConfigurableResource
 
+REGION_TO_PLATFORM = {
+    "EUW": "euw1",
+    "EUNE": "eun1",
+    "TR": "tr1",
+    "RU": "ru",
+    "KR": "kr",
+    "JP": "jp1",
+    "NA": "na1",
+    "LAN": "la1",
+    "LAS": "la2",
+    "BR": "br1",
+    "OCE": "oc1",
+    "SG": "sg2",
+    "PH": "ph2",
+    "TW": "tw2",
+    "VN": "vn2",
+    "TH": "th2",
+}
+
+DEFAULT_PLATFORM = "euw1"
+
 MATCH_ID_PREFIX_TO_CLUSTER = {
     "EUW1": "europe",
     "EUN1": "europe",
@@ -357,3 +378,65 @@ class RiotResource(ConfigurableResource):
 
         log.warning("All %d attempts failed for %s/timeline — returning None", _MAX_RETRIES, match_id)
         return None
+
+    def get_player_ranking(self, puuid: str, region: str, log: Any) -> list[dict]:
+        """Fetch all ranked entries for a player by PUUID.
+
+        Args:
+            puuid: Riot PUUID of the player.
+            region: League region used to pick the correct platform (e.g. "EUW" → euw1).
+            log: Dagster context.log passed from the calling asset.
+
+        Returns:
+            List of ranked entry dicts (one per queue type), or empty list on failure.
+        """
+        platform = REGION_TO_PLATFORM.get(region.upper(), DEFAULT_PLATFORM)
+        url = f"https://{platform}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}"
+
+        log.debug("GET ranking for puuid=%s… (platform=%s)", puuid[:8], platform)
+
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                response = requests.get(url, params={"api_key": self.api_key}, timeout=10)
+                log.debug(
+                    "  → HTTP %d [%dms] for puuid=%s… (attempt %d)",
+                    response.status_code,
+                    response.elapsed.microseconds // 1000,
+                    puuid[:8],
+                    attempt,
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+
+                if response.status_code == 404:
+                    log.debug("  → No ranking found for puuid=%s…", puuid[:8])
+                    return []
+
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 5))
+                    log.warning(
+                        "Rate limit hit (429) for puuid=%s… — waiting %ds (attempt %d/%d)",
+                        puuid[:8],
+                        retry_after,
+                        attempt,
+                        _MAX_RETRIES,
+                    )
+                    time.sleep(retry_after)
+                    continue
+
+                response.raise_for_status()
+
+            except requests.RequestException as exc:
+                log.warning(
+                    "Request failed for puuid=%s… (attempt %d/%d): %s",
+                    puuid[:8],
+                    attempt,
+                    _MAX_RETRIES,
+                    exc,
+                )
+                if attempt < _MAX_RETRIES:
+                    time.sleep(2 ** attempt)
+
+        log.warning("All %d attempts failed for puuid=%s… — returning []", _MAX_RETRIES, puuid[:8])
+        return []
